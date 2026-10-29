@@ -111,7 +111,10 @@ install_dotnet() {
 run_launcher() {
     say "ElDewrito launcher (guide step 6)"
     export WINEPREFIX="$PREFIX" WINEDEBUG=-all
-    cd "$PREFIX/drive_c/stage"
+    # The launcher installs into its own directory, so stage it where the
+    # game should live rather than in a scratch folder.
+    mkdir -p "$GAME_DIR"
+    cd "$GAME_DIR"
     [ -f launcher.exe ] || curl -fL --progress-bar -o launcher.exe "$LAUNCHER_URL"
     cat <<'EOF'
 
@@ -122,13 +125,24 @@ run_launcher() {
         (both are required; denying either stalls the download at 0%)
 
 EOF
-    "$WINE" 'C:\stage\launcher.exe' || true
+    "$WINE" 'C:\Program Files\ElDewrito\launcher.exe' || true
+}
+
+# The launcher installs beside itself, and a user may have pointed it
+# elsewhere, so locate eldorado.exe rather than assuming.
+find_game() {
+    local hit
+    hit="$(find "$PREFIX/drive_c" -maxdepth 5 -iname eldorado.exe 2>/dev/null | head -1)"
+    [ -n "$hit" ] && dirname "$hit"
 }
 
 configure() {
     say "Config (guide step 7)"
+    local found; found="$(find_game || true)"
+    [ -n "$found" ] && GAME_DIR="$found"
     local cfg="$GAME_DIR/data/dewrito_prefs.cfg"
-    [ -d "$GAME_DIR" ] || { warn "game not found at $GAME_DIR - skipping"; return; }
+    [ -d "$GAME_DIR" ] || { warn "game not found - run the launcher first, then re-run this script"; return; }
+    ok "game at $GAME_DIR"
     mkdir -p "$(dirname "$cfg")"; touch "$cfg"
     if grep -q '^Game.CEFGpuEnable' "$cfg" 2>/dev/null; then
         sed -i '' 's/^Game.CEFGpuEnable.*/Game.CEFGpuEnable 0/' "$cfg"
@@ -147,7 +161,12 @@ write_play_script() {
 export WINEPREFIX="$PREFIX"
 export WINEESYNC=0
 export WINEDEBUG=-all
-cd "$GAME_DIR" 2>/dev/null || exit 1
+GAME="$GAME_DIR"
+if [ ! -f "\$GAME/eldorado.exe" ]; then
+  GAME="\$(find "$PREFIX/drive_c" -maxdepth 5 -iname eldorado.exe 2>/dev/null | head -1 | xargs -r dirname)"
+fi
+[ -n "\$GAME" ] || { echo "eldorado.exe not found - run the launcher first"; read -r _; exit 1; }
+cd "\$GAME" || exit 1
 exec "$WINE" eldorado.exe "\$@"
 EOF
     chmod +x "$p"

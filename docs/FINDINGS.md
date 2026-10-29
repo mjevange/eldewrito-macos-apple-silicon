@@ -179,6 +179,35 @@ useful error.
 
 ---
 
+## 3b. The launcher installs into its own directory
+
+**Verified by accident, and it matters.** A full end-to-end run downloaded all
+**5.7 GB** cleanly (0 stack overflows, 172 KB of log) and the launcher
+transitioned from installer to its home screen — "Version: 0.7.1" with a live
+**PLAY** button.
+
+But `eldorado.exe` was nowhere under `C:\Program Files\ElDewrito`. The launcher
+had been staged in `C:\stage`, and **installed the game beside itself** rather
+than at the path the official guide names.
+
+Consequences:
+
+- Wherever you put `launcher.exe` is where the game lands, unless you change the
+  path in the wizard.
+- The official guide's step 8 launch command assumes
+  `C:\Program Files\ElDewrito\eldorado.exe`. That only holds if you actually
+  set that path in the wizard — the guide's steps 4–6 stage the launcher in a
+  **different** folder (`Program_Files`, underscore), so following it literally
+  can leave the game somewhere step 8 does not look.
+- `install.sh` had the same flaw and now stages the launcher inside the intended
+  game directory, and locates `eldorado.exe` by search rather than assumption.
+
+If your play command cannot find the game:
+
+```bash
+find ~/my-game-prefix/drive_c -maxdepth 5 -iname eldorado.exe
+```
+
 ## 4. What CI can and cannot prove
 
 GitHub's arm64 runners report:
@@ -195,8 +224,9 @@ A **paravirtualised** GPU. MoltenVK 1.4.2 initialises and enumerates 153 Vulkan
 extensions, so the graphics stack comes up — but this is not real hardware.
 
 **Proven in CI:** runtime install, prefix creation, .NET install, launcher
-startup, window rendering, wizard interaction, and the P2P download running at
-**5.17 MB/s** with a realistic time estimate.
+startup, window rendering, wizard interaction, and the **complete 5.7 GB P2P
+download** — peaking at 5.17 MB/s, finishing clean, with the launcher reaching
+its home screen and offering PLAY.
 
 **Not provable in CI:** whether Halo Online itself renders through DXMT/D3DMetal.
 That needs a physical Mac. The verified runtime ships **DXVK 1.10.3** and
