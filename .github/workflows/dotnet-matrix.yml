@@ -18,6 +18,12 @@ jobs:
   launcher:
     runs-on: macos-15
     timeout-minutes: 40
+    # Wine 11.18 blocked on prefix init: with no WINEPREFIX it built ~/.wine,
+    # and the Mono/Gecko installer dialogs wait for a click that never comes.
+    env:
+      WINEPREFIX: /Users/runner/pfx
+      WINEDLLOVERRIDES: "mscoree,mshtml="
+      WINEDEBUG: "-all"
     strategy:
       fail-fast: false
       matrix:
@@ -98,11 +104,20 @@ jobs:
           fi
 
       - name: Start launcher
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           export WINEPREFIX="$HOME/pfx"
-          URL=$(curl -fsSL \
+          # Authenticated: four parallel jobs hit the unauthenticated API
+          # limit and got 403.
+          URL=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
             https://api.github.com/repos/eldewrito2/ElDewritoLauncher/releases/latest \
             | grep -o 'https://[^"]*launcher\.exe' | head -1)
+          if [ -z "$URL" ]; then
+            echo "WARN: API lookup failed, falling back to pinned 0.1.1"
+            URL="https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+          fi
+          echo "launcher url: $URL"
           curl -fL -o "$HOME/pfx/drive_c/stage/launcher.exe" "$URL"
           WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
           echo "started"
