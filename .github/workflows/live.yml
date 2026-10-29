@@ -1,0 +1,122 @@
+# Live monitoring of a real macOS runner while the launcher boots.
+#
+# Two ways to watch:
+#   1. Live text - the Wine log is tailed to stdout, so the Actions page
+#      streams it in your browser as it happens.
+#   2. Live screen - tmate opens an SSH session into the runner; tunnel macOS
+#      Screen Sharing (VNC) over it and you can watch the desktop AND click
+#      through the wizard yourself.
+#
+# SECURITY: tmate access is limited to the GitHub actor's registered SSH keys
+# (limit-access-to-actor), so the printed address is not usable by others. The
+# VNC password below only matters behind that tunnel, which is not exposed to
+# the internet.
+
+name: live
+on:
+  workflow_dispatch:
+    inputs:
+      hold_minutes:
+        description: "How long to hold the session open for you to connect"
+        required: false
+        default: "30"
+
+jobs:
+  live:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      WINEPREFIX: /Users/runner/lfx
+      WINEDEBUG: "-all"
+      VNC_PW: "eldew123"
+
+    steps:
+      - name: Runtime, prefix, .NET, launcher binary
+        timeout-minutes: 30
+        run: |
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          mkdir -p "$HOME/ww"
+          curl -fL --retry 3 -o "$HOME/ww.tar.gz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$HOME/ww.tar.gz" -C "$HOME/ww"
+          xattr -dr com.apple.quarantine "$HOME/ww" 2>/dev/null || true
+          W="$HOME/ww/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+          "$W" --version
+
+          "$W" wineboot --init || echo "WARN: wineboot"
+          sleep 40
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -o dotnet.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" \
+            || curl -fL -o dotnet.exe "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0.36/windowsdesktop-runtime-6.0.36-win-x64.exe"
+          "$W" 'C:\stage\dotnet.exe' /quiet /norestart || echo "WARN: dotnet"
+          sleep 15
+          ls "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" >/dev/null 2>&1 \
+            && echo "RESULT: .NET OK" || echo "RESULT: .NET MISSING"
+          curl -fL -o launcher.exe \
+            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+
+      - name: Enable Screen Sharing (VNC) on the runner
+        run: |
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -restart -agent -privs -all 2>&1 | tail -3 || true
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$VNC_PW" 2>&1 | tail -3 || true
+          sleep 5
+          echo "--- is 5900 listening? ---"
+          netstat -an | grep -E '\.5900' || lsof -nP -iTCP:5900 -sTCP:LISTEN || echo "5900 not listening yet"
+
+      - name: Start the launcher and stream its console
+        run: |
+          : > "$HOME/live.log"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' >> "$HOME/live.log" 2>&1 &
+          echo "launcher started"
+          # Stream the Wine console into the Actions log, live in your browser.
+          ( tail -f "$HOME/live.log" | sed 's/^/[wine] /' ) &
+          echo "TAIL_PID=$!" >> "$GITHUB_ENV"
+          sleep 20
+          echo "--- foreground apps ---"
+          osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || true
+
+      - name: Connect here
+        run: |
+          cat <<'EOF'
+          ================= HOW TO WATCH LIVE =================
+          TEXT  : this page streams the Wine console, lines prefixed [wine]
+          SCREEN: the next step prints an ssh command. From WSL run it with a
+                  VNC tunnel added:
+
+                    ssh -L 5900:localhost:5900 <the tmate address>
+
+                  Then point a VNC viewer at   localhost:5900
+                  password: eldew123
+
+                  Windows VNC viewers: TightVNC, RealVNC, or UltraVNC.
+                  In WSL:  sudo apt install -y tigervnc-viewer
+                           vncviewer localhost:5900
+
+          You can click Next in the wizard yourself once connected.
+          Type 'touch /continue' in the tmate shell to end the session early.
+          =====================================================
+          EOF
+
+      - name: tmate session (SSH in)
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+          detached: false
+
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/ev
+          /usr/sbin/screencapture -x /tmp/ev/final.png 2>/dev/null || true
+          cp "$HOME/live.log" /tmp/ev/ 2>/dev/null || true
+          find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 -type d 2>/dev/null | head -15 > /tmp/ev/tree.txt || true
+          du -sh "$WINEPREFIX" 2>/dev/null >> /tmp/ev/tree.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live
+          path: /tmp/ev
+          if-no-files-found: warn
