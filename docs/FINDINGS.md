@@ -170,12 +170,24 @@ itself. Worth retesting on real hardware if anyone is curious.
 - The launcher requests .NET app host **6.0.29**; `aka.ms` currently serves
   **6.0.36**, which works.
 
-### Two permission prompts, not one
+### Two permission prompts, and only one matters
 
-The official guide mentions the firewall prompt. There is a **second** one:
-macOS asks *"Allow <app> to find devices on local networks?"* when the P2P
-download starts. **Both must be allowed** or the torrent stalls at 0% with no
-useful error.
+The official guide mentions the firewall prompt. There is a **second**: macOS
+asks *"Allow <app> to find devices on local networks?"* when the P2P download
+starts.
+
+**The local-network prompt is not required.** An earlier draft of these notes
+claimed both had to be allowed or the download would stall — that was reasoning,
+not evidence, and the evidence refutes it. In the full end-to-end run the dialog
+appeared and was **never answered**, yet the download ran at 3.12–5.17 MB/s and
+completed all 5.7 GB. Screenshots at minutes 15 and 30 both show it still on
+screen, unanswered, with the transfer progressing behind it.
+
+It governs **local peer discovery only**, which on a cloud runner would find
+nothing anyway. Allow it if you have other machines on your LAN; ignoring it
+costs you nothing else.
+
+The **firewall** prompt is the one that gates the transfer.
 
 ---
 

@@ -66,13 +66,17 @@ bash install.sh --uninstall  # remove prefix, runtime and play script
 The script is **idempotent** — re-run it safely; it skips what is already done.
 When it finishes you get `~/Desktop/Play ElDewrito.command`.
 
-### During the install, two prompts must be allowed
+### Two prompts appear during the install
 
-1. the **firewall** prompt (the official guide mentions this one)
-2. a macOS prompt — *"Allow … to find devices on local networks?"*
+1. the **firewall** prompt — the official guide mentions this one, and it
+   gates the peer-to-peer download. Allow it.
+2. a macOS prompt — *"Allow … to find devices on local networks?"* — which
+   appears when the download starts.
 
-The second is undocumented elsewhere and appears when the peer-to-peer download
-starts. **Denying either stalls the download at 0%** with no useful error.
+**The second one is optional.** In testing the download completed at 3–5 MB/s
+with that dialog sitting on screen unanswered for its entire 25-minute run, so
+it is not required. Allow it anyway if you have other machines on your LAN —
+it only governs local peer discovery — but ignoring it will not stall anything.
 
 ### Playing
 
