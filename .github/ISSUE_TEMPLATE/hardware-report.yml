@@ -1,0 +1,47 @@
+name: Hardware report
+description: Tell us whether the install worked on your Mac
+title: "[Hardware] "
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. CI cannot test real GPUs, so these reports are the only way we
+        learn whether the game actually renders. Failures are as useful as
+        successes.
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: What happened?
+      options:
+        - The game runs and is playable
+        - The game launches but renders wrongly
+        - The launcher works, the game does not start
+        - The launcher does not start
+        - The install failed before the launcher
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac model and chip
+      placeholder: "MacBook Air M1, 2020 / 8GB"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "14.5"
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `bash install.sh --check`
+      render: shell
+  - type: textarea
+    id: detail
+    attributes:
+      label: What happened, and where it stopped
+      description: Wine output, screenshots, or the step it failed at.
