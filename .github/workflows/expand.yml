@@ -53,13 +53,12 @@ jobs:
         run: |
           : > "$HOME/c.log"
           # A Terminal window tailing the log, so the capture shows the console.
-          osascript <<'OSA' || echo "WARN: could not open Terminal"
-          tell application "Terminal"
-            activate
-            do script "printf '\\e[8;24;100t'; tail -f $HOME/c.log"
-            set bounds of front window to {10, 500, 1010, 760}
-          end tell
-OSA
+          osascript \
+            -e 'tell application "Terminal"' \
+            -e 'activate' \
+            -e "do script \"tail -f $HOME/c.log\"" \
+            -e 'set bounds of front window to {10, 480, 1014, 762}' \
+            -e 'end tell' || echo "WARN: could not open Terminal"
           sleep 3
           WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' >> "$HOME/c.log" 2>&1 &
           ( /usr/sbin/screencapture -v -V 150 "$HOME/console-boot.mp4" >/dev/null 2>&1 \
