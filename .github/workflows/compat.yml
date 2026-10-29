@@ -72,9 +72,14 @@ jobs:
           curl -fL -sS -o launcher.exe \
             "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
           "$W" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
-          sleep 75
+          # Poll up to 4 minutes: a slower runner is not an incompatibility.
+          START=$(date +%s); APPS=""
+          for i in $(seq 1 48); do
+            sleep 5
+            APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+            echo "$APPS" | grep -qi wine && { echo "RESULT: ${{ matrix.runner }} seconds_to_window=$(( $(date +%s) - START ))"; break; }
+          done
           OV=$(grep -c 'stack overflow' "$HOME/l.log" || true)
-          APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
           echo "RESULT: ${{ matrix.runner }} overflows=$OV apps=$APPS"
           test "$OV" -eq 0 || { echo "FAIL: crashed"; exit 1; }
           echo "$APPS" | grep -qi wine || { echo "FAIL: no window"; exit 1; }
