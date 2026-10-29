@@ -1,19 +1,20 @@
-# Validates the GPTK install chain on a real Apple Silicon runner.
-# Drop at .github/workflows/gptk-probe.yml in a PUBLIC repo (free), then
-# run it from the Actions tab. Headless: proves the commands, not the pixels.
+# Validates the GPTK install chain on an Apple Silicon macOS runner.
+# Headless: proves the commands resolve, not that anything renders.
+# NOTE: GitHub's arm64 runners report "Apple M1 (Virtual)" - they are VMs with a
+# paravirtualized GPU, so they cannot verify D3DMetal rendering.
 
 name: gptk-probe
 on: workflow_dispatch
 
 jobs:
   probe:
-    runs-on: macos-15          # Apple Silicon. If this errors, try macos-14 or macos-latest.
+    runs-on: macos-15
     timeout-minutes: 90
 
     steps:
       - name: Machine facts
         run: |
-          uname -m              # expect arm64
+          uname -m
           sw_vers -productVersion
           sysctl -n machdep.cpu.brand_string
 
@@ -25,65 +26,82 @@ jobs:
             softwareupdate --install-rosetta --agree-to-license
           fi
 
-      - name: x86_64 Homebrew
+      # Every GPTK guide says to install an x86_64 Homebrew in /usr/local.
+      # Recording whether that is still possible at all.
+      - name: Can an x86_64 Homebrew still be installed?
+        continue-on-error: true
         run: |
+          echo "::group::attempt"
           arch -x86_64 /bin/bash -c '
-            if [ ! -x /usr/local/bin/brew ]; then
-              NONINTERACTIVE=1 /bin/bash -c \
-                "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            fi
-            eval "$(/usr/local/bin/brew shellenv)"
-            echo "brew prefix: $(brew --prefix)"   # must be /usr/local
-          '
+            NONINTERACTIVE=1 /bin/bash -c \
+              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+              2>&1 | tail -5
+          ' || echo "RESULT: x86_64 Homebrew install failed"
+          echo "::endgroup::"
+          test -x /usr/local/bin/brew \
+            && echo "RESULT: /usr/local/bin/brew EXISTS" \
+            || echo "RESULT: /usr/local/bin/brew ABSENT - x86_64 Homebrew unavailable"
+
+      - name: Homebrew in use
+        run: |
+          which brew
+          brew --prefix
+          brew --version | head -1
 
       - name: Conflicting wine casks
         run: |
-          arch -x86_64 /bin/bash -c '
-            eval "$(/usr/local/bin/brew shellenv)"
-            brew list --cask 2>/dev/null | grep -E "wine|crossover|kegworks" || echo "none installed"
-          '
+          brew list --cask 2>/dev/null | grep -E 'wine|crossover|kegworks' \
+            || echo "none installed"
 
-      - name: Install GPTK cask
+      # Hypothesis: the prebuilt cask needs no x86_64 Homebrew, because it only
+      # downloads an app bundle. --no-quarantine has been removed from Homebrew.
+      - name: Install GPTK cask via arm64 Homebrew
         run: |
-          arch -x86_64 /bin/bash -c '
-            eval "$(/usr/local/bin/brew shellenv)"
-            brew install --cask --no-quarantine gcenx/wine/game-porting-toolkit
-            which wine64
-            wine64 --version
-          '
+          brew install --cask gcenx/wine/game-porting-toolkit
+          echo "--- quarantine attr ---"
+          xattr -l "/Applications/Game Porting Toolkit.app" 2>/dev/null || echo "(none)"
+          xattr -dr com.apple.quarantine "/Applications/Game Porting Toolkit.app" 2>/dev/null \
+            && echo "quarantine cleared" || echo "nothing to clear"
+
+      - name: Locate wine64
+        run: |
+          which wine64 || echo "WARN: wine64 not on PATH"
+          ls -la "$(brew --prefix)/bin" | grep -i wine || echo "WARN: no wine symlinks in brew prefix"
+          file "$(readlink -f "$(which wine64)")" 2>/dev/null || true
+          wine64 --version || echo "WARN: wine64 --version failed"
 
       - name: Create prefix
         run: |
-          arch -x86_64 /bin/bash -c '
-            eval "$(/usr/local/bin/brew shellenv)"
-            export WINEPREFIX="$HOME/my-game-prefix"
-            export WINEDEBUG=-all
-            wine64 wineboot --init
-            sleep 25
-            wine64 cmd /c ver || echo "WARN: cmd ver failed"
-            ls "$WINEPREFIX/drive_c"
-            mkdir -p "$WINEPREFIX/drive_c/Program_Files"
-          '
+          export WINEPREFIX="$HOME/my-game-prefix"
+          export WINEDEBUG=-all
+          wine64 wineboot --init || echo "WARN: wineboot nonzero"
+          sleep 30
+          wine64 cmd /c ver || echo "WARN: cmd ver failed"
+          ls "$WINEPREFIX/drive_c" || echo "WARN: no drive_c"
+          mkdir -p "$WINEPREFIX/drive_c/Program_Files"
 
       - name: Shims
         run: |
+          D="$(brew --prefix)/bin"
           printf '#!/bin/sh\nexport WINEPREFIX="$1"; shift\nexport WINEDEBUG=-all\nexec wine64 "$@"\n' \
-            > /usr/local/bin/gameportingtoolkit
-          chmod +x /usr/local/bin/gameportingtoolkit
-          arch -x86_64 gameportingtoolkit "$HOME/my-game-prefix" cmd /c ver || echo "WARN: shim failed"
+            > "$D/gameportingtoolkit"
+          chmod +x "$D/gameportingtoolkit"
+          gameportingtoolkit "$HOME/my-game-prefix" cmd /c ver \
+            || echo "WARN: shim failed"
 
       - name: .NET 6 desktop runtime
         run: |
-          arch -x86_64 /bin/bash -c '
-            eval "$(/usr/local/bin/brew shellenv)"
-            cd "$HOME/my-game-prefix/drive_c/Program_Files"
-            curl -fL -o dotnet.exe \
-              "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" || exit 1
-            ls -la dotnet.exe
-            export WINEPREFIX="$HOME/my-game-prefix" WINEDEBUG=-all
-            wine64 "C:\\Program_Files\\dotnet.exe" /quiet /norestart || echo "WARN: installer nonzero"
-            ls "$WINEPREFIX/drive_c/Program Files/dotnet" 2>/dev/null || echo "WARN: dotnet dir absent"
-          '
+          cd "$HOME/my-game-prefix/drive_c/Program_Files"
+          curl -fL -o dotnet.exe \
+            "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" \
+            || { echo "FAIL: aka.ms .NET URL did not resolve"; exit 1; }
+          ls -la dotnet.exe
+          file dotnet.exe
+          export WINEPREFIX="$HOME/my-game-prefix" WINEDEBUG=-all
+          wine64 'C:\Program_Files\dotnet.exe' /quiet /norestart \
+            || echo "WARN: installer returned nonzero"
+          ls "$HOME/my-game-prefix/drive_c/Program Files/dotnet" 2>/dev/null \
+            || echo "WARN: dotnet dir absent"
 
       - name: Fetch ElDewrito launcher
         run: |
@@ -93,27 +111,24 @@ jobs:
           echo "resolved: ${URL:-NONE}"
           test -n "$URL" || { echo "FAIL: could not resolve launcher.exe"; exit 1; }
           curl -fL -o "$HOME/my-game-prefix/drive_c/Program_Files/launcher.exe" "$URL"
+          ls -la "$HOME/my-game-prefix/drive_c/Program_Files/launcher.exe"
+          # Settles whether the launcher is 32- or 64-bit.
           file "$HOME/my-game-prefix/drive_c/Program_Files/launcher.exe"
 
       - name: Launch wizard and capture
-        # The decisive test: does the installer UI actually render under GPTK?
-        # Backgrounded, then screenshotted. We never let the 5GB torrent run.
         run: |
-          arch -x86_64 /bin/bash -c '
-            eval "$(/usr/local/bin/brew shellenv)"
-            export WINEPREFIX="$HOME/my-game-prefix"
-            export WINEDEBUG=+err,+warn
-            wine64 "C:\\Program_Files\\launcher.exe" > "$HOME/launcher.log" 2>&1 &
-            echo "pid $!"
-          ' || true
-          for t in 20 40 60 90; do
+          export WINEPREFIX="$HOME/my-game-prefix"
+          export WINEDEBUG=+err,+warn
+          wine64 'C:\Program_Files\launcher.exe' > "$HOME/launcher.log" 2>&1 &
+          echo "pid $!"
+          for t in 20 40 60; do
             sleep 20
             /usr/sbin/screencapture -x "$HOME/shot-${t}s.png" 2>/dev/null \
               && echo "captured at ${t}s" || echo "screencapture unavailable at ${t}s"
           done
           pgrep -fl launcher.exe || echo "NOTE: launcher process not running"
-          echo "--- launcher.log (tail) ---"
-          tail -60 "$HOME/launcher.log" 2>/dev/null || echo "no log"
+          echo "--- launcher.log tail ---"
+          tail -80 "$HOME/launcher.log" 2>/dev/null || echo "no log"
 
       - name: Collect evidence
         if: always()
@@ -121,8 +136,14 @@ jobs:
           mkdir -p /tmp/evidence
           cp "$HOME"/shot-*.png /tmp/evidence/ 2>/dev/null || true
           cp "$HOME/launcher.log" /tmp/evidence/ 2>/dev/null || true
-          ls -la "$HOME/my-game-prefix/drive_c/Program_Files" > /tmp/evidence/prefix-listing.txt 2>&1 || true
-          ls -la "$HOME/my-game-prefix/drive_c/Program Files" >> /tmp/evidence/prefix-listing.txt 2>&1 || true
+          {
+            echo "== Program_Files =="
+            ls -la "$HOME/my-game-prefix/drive_c/Program_Files" 2>&1
+            echo; echo "== Program Files =="
+            ls -la "$HOME/my-game-prefix/drive_c/Program Files" 2>&1
+            echo; echo "== brew prefix bin (wine) =="
+            ls -la "$(brew --prefix)/bin" 2>&1 | grep -i -E 'wine|gameporting' || echo none
+          } > /tmp/evidence/prefix-listing.txt 2>&1 || true
 
       - uses: actions/upload-artifact@v4
         if: always()
