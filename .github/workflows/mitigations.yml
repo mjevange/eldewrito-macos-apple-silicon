@@ -181,3 +181,85 @@ jobs:
           name: apple-gptk
           path: /tmp/ev
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------- C
+  # Prebuilt CrossOver+GPTK runtime shipped by the maintained Whisky fork.
+  # gptkCapable=true, DXVK 1.10.3, DXMT 0.80, built Aug 2026 - far newer than
+  # the Homebrew cask's wine-7.7, and no 75-minute compile.
+  whiskywine:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      WINEPREFIX: /Users/runner/wfx
+      WINEDEBUG: "-all"
+
+    steps:
+      - name: Fetch prebuilt runtime
+        run: |
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          mkdir -p "$HOME/ww"
+          curl -fL --retry 3 -o "$HOME/ww.tar.gz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          ls -la "$HOME/ww.tar.gz"
+          tar -xzf "$HOME/ww.tar.gz" -C "$HOME/ww"
+          xattr -dr com.apple.quarantine "$HOME/ww" 2>/dev/null || true
+          echo "--- tree ---"
+          find "$HOME/ww" -maxdepth 3 -type d | head -20
+          echo "--- wine binaries ---"
+          find "$HOME/ww" -name 'wine*' -type f -perm -u+x | head -10
+
+      - name: Select wine
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          W=$(find "$HOME/ww" -name 'wine64' -type f -perm -u+x | head -1)
+          [ -n "$W" ] || W=$(find "$HOME/ww" -name 'wine' -type f -perm -u+x | head -1)
+          echo "selected: ${W:-NONE}"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+          [ -n "$W" ] && "$W" --version 2>&1 | tee /tmp/wine.txt || echo "no wine binary"
+
+      - name: Prefix, .NET, launcher
+        if: env.WINE != ''
+        continue-on-error: true
+        timeout-minutes: 35
+        run: |
+          "$WINE" wineboot --init || echo "WARN: wineboot"
+          sleep 40
+          "$WINE" cmd /c ver || echo "WARN: ver"
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -o dotnet.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" \
+            || curl -fL -o dotnet.exe "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0.36/windowsdesktop-runtime-6.0.36-win-x64.exe"
+          "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart || echo "WARN: dotnet installer"
+          sleep 15
+          ls "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" 2>/dev/null \
+            && echo "RESULT: .NET OK" || echo "RESULT: .NET MISSING"
+          curl -fL -o launcher.exe \
+            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' > "$HOME/w.log" 2>&1 &
+          ( /usr/sbin/screencapture -v -V 90 "$HOME/whisky-boot.mp4" >/dev/null 2>&1 || \
+            echo "video unavailable" ) &
+          for m in 1 2 3; do
+            sleep 60
+            osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || true
+            /usr/sbin/screencapture -x "$HOME/whisky-m$m.png" 2>/dev/null || true
+          done
+          echo "RESULT: overflows=$(grep -c 'stack overflow' "$HOME/w.log" || echo 0)"
+          echo "RESULT: toast_fail=$(grep -c 'ToastNotificationManager' "$HOME/w.log" || echo 0)"
+          echo "RESULT: bytes=$(wc -c < "$HOME/w.log")"
+          tail -25 "$HOME/w.log"
+
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/ev
+          cp "$HOME"/whisky-*.png /tmp/ev/ 2>/dev/null || true
+          cp "$HOME"/whisky-boot.mp4 /tmp/ev/ 2>/dev/null || true
+          cp "$HOME/w.log" /tmp/ev/ 2>/dev/null || true
+          cp /tmp/wine.txt /tmp/ev/ 2>/dev/null || true
+          ls -la /tmp/ev
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: whiskywine
+          path: /tmp/ev
+          if-no-files-found: warn
