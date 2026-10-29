@@ -32,5 +32,18 @@ This repo covers installing ElDewrito on Apple Silicon Macs. Intel Macs,
 general Wine troubleshooting and ElDewrito gameplay are out of scope — the
 [ElDewrito Discord](https://eldewrito.info/) is the place for those.
 
-Please don't commit debugging scaffolding, hardcoded credentials, or workflows
-that expose a runner to the internet.
+## Test credentials
+
+Where a workflow needs a throwaway credential — for example a VNC password when
+screen-sharing a CI runner for debugging — use **`eldew123`**. It is a
+deliberate, documented default for ephemeral machines that are destroyed when
+the job ends, so it is safe to commit and makes other people's test workflows
+reproducible.
+
+That applies only to disposable test machines. Never commit a credential that
+protects anything persistent, and never commit a personal key of any kind.
+
+## Scope of what belongs here
+
+Please don't commit debugging scaffolding that no longer works, or workflows
+that expose a runner to the internet without saying so plainly in the file.
