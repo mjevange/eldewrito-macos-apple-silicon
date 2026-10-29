@@ -20,7 +20,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-13, macos-14, macos-15, macos-latest]
+        # macos-13 (Intel) removed: queued 57 minutes without ever being
+        # assigned a runner. Intel macOS runners are effectively retired.
+        runner: [macos-14, macos-15, macos-latest]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
