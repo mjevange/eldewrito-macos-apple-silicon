@@ -142,6 +142,24 @@ err:module:fixup_imports_ilonly mscoree.dll not found,
 Do not use it for a real install. (It did **not** cause the Wine 7.7 crash — that
 reproduces without it.)
 
+**Outcome: plain Wine never ran the launcher.** With `WINEPREFIX` set correctly
+and 35 minutes allowed, `wine-devel 11.18` created its prefix directory and
+initialised MoltenVK, but could not launch executables from it:
+
+```
+Application could not be started, or no application associated with the specified file.
+ShellExecuteEx failed: File not found.
+```
+
+No launcher log was produced. The GPTK runtime completed the same sequence in
+about two minutes.
+
+**Confidence: moderate.** This suggests the CrossOver/GPTK patches do real work
+beyond rendering, so the specific runtime is worth naming rather than "any
+modern Wine". But the root cause was never isolated — it may be these `osx64`
+builds under Rosetta on a virtualised machine rather than the absence of GPTK
+itself. Worth retesting on real hardware if anyone is curious.
+
 ### Binary facts
 
 - `launcher.exe` is **`PE32+ executable (GUI) x86-64`** — 64-bit, 11,060,322
