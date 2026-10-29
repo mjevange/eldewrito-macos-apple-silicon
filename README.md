@@ -9,7 +9,7 @@ cd eldewrito-macos-apple-silicon
 bash install.sh
 ```
 
-Requires **Apple Silicon**, **macOS 14 (Sonoma) or newer**, and ~15 GB free.
+Requires **Apple Silicon**, **macOS 15 (Sequoia) or newer**, and ~15 GB free.
 Intel Macs cannot run this — [see why](#intel-macs).
 
 [![verify](https://github.com/mjevange/eldewrito-macos-apple-silicon/actions/workflows/verify.yml/badge.svg)](https://github.com/mjevange/eldewrito-macos-apple-silicon/actions/workflows/verify.yml)
@@ -43,6 +43,9 @@ eliminated, and every gotcha found along the way are in
 | | |
 |---|---|
 | Runtime, prefix and .NET install | ✅ verified in CI |
+| macOS 15 and macOS 26 | ✅ launcher window in 22 seconds |
+| macOS 14 (Sonoma) | ❌ **no window after 4 minutes** |
+| .NET 6.0.29, 6.0.36 and 8.0.33 | ✅ all work |
 | Launcher starts and renders its UI | ✅ verified in CI |
 | Game files download over P2P | ✅ verified — 5.17 MB/s |
 | **The game itself renders and plays** | ❓ **unverified** |

@@ -229,6 +229,76 @@ If your play command cannot find the game:
 find ~/my-game-prefix/drive_c -maxdepth 5 -iname eldorado.exe
 ```
 
+## 3c. macOS version: 15 or newer, not 14
+
+Tested across three runner images, same runtime, same steps:
+
+| Runner | macOS | Wine | Launcher window |
+|---|---|---|---|
+| `macos-14` | 14.8.9 | 11.16 | ❌ none after **4 minutes**, 0 crashes |
+| `macos-15` | 15.7.9 | 11.16 | ✅ **22 seconds** |
+| `macos-latest` | 26.6.2 | 11.16 | ✅ **22 seconds** |
+
+Because 15 and 26 produce a window in 22 seconds, a four-minute poll finding
+nothing on 14 is not slowness. Wine itself ran — it reported `wine-11.16` and
+logged **zero** stack overflows — but no window ever appeared.
+
+**This corrects the requirement.** Earlier notes said "macOS 14 (Sonoma) or
+newer", taken from Apple's GPTK documentation rather than tested. The
+observed floor is **macOS 15**.
+
+Caveat worth stating: this is on virtual machines. A 14.x user seeing it work on
+real hardware should [report it](https://github.com/mjevange/eldewrito-macos-apple-silicon/issues/new/choose)
+— that would change the recommendation.
+
+## 3d. .NET: any of 6.0.29, 6.0.36 or 8.0.33 works
+
+The launcher requests app host **6.0.29**, but it is not fussy:
+
+| Installed | Launcher window | Crashes |
+|---|---|---|
+| 6.0.29 (exact match) | ✅ | 0 |
+| 6.0.36 (latest 6.x) | ✅ | 0 |
+| **8.0.33** | ✅ | 0 |
+
+So users are **not** pinned to an end-of-life runtime. .NET 8 satisfies it
+through roll-forward, which matters because Microsoft will eventually stop
+serving 6.0.x.
+
+## 3e. Apple's own GPTK route is blocked
+
+Tested properly, with errors captured rather than swallowed:
+
+- The x86_64 Homebrew **is** installable from a **tagged release** tarball
+  (tag 7.0.11) and is operational — `brew search` works. Pulling
+  `tarball/master` does not: Homebrew refuses to run from master.
+- But **both** `apple/apple` and `gcenx/apple` fail to install
+  `game-porting-toolkit`, and neither produces a wine binary:
+
+  ```
+  If the biggest companies in the world cannot support macOS Intel x86_64
+  Some of Homebrew's bottles (binary packages) cannot be used with this prefix.
+  ```
+
+Homebrew has deprecated x86_64 macOS, so the bottles the formula needs no longer
+exist for a `/usr/local` prefix.
+
+**Conclusion: Apple's documented GPTK route cannot currently be completed**, and
+the prebuilt `winecx-gptk` runtime is not merely the faster option — it is the
+only one that works. (These notes previously said the opposite twice, in both
+directions, before the errors were actually captured.)
+
+## 3f. The Whisky GUI route
+
+[frankea/Whisky](https://github.com/frankea/Whisky) **3.7.0** installs cleanly
+from its release DMG. It downloads its Wine runtime only after GUI interaction,
+so headless CI could not confirm which build it uses — the app is installed and
+functional, but `whisky_wine=not-found` without clicking through it.
+
+Given the maintainer also publishes `winecx-gptk`, it very likely uses the same
+runtime verified here, but that is **inference, not measurement**. Anyone using
+Whisky successfully is welcome to confirm it.
+
 ## 4. What CI can and cannot prove
 
 GitHub's arm64 runners report:
