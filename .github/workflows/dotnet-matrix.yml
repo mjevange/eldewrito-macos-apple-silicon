@@ -28,6 +28,10 @@ jobs:
       - name: Facts
         run: |
           uname -m; sw_vers -productVersion
+          # macOS ships no GNU `timeout`; earlier runs wrapped every wine call
+          # in it, so they silently no-op'd and .NET never installed.
+          echo "timeout:  $(command -v timeout  || echo ABSENT)"
+          echo "gtimeout: $(command -v gtimeout || echo ABSENT)"
           /usr/bin/pgrep -q oahd && echo "Rosetta present" \
             || softwareupdate --install-rosetta --agree-to-license
 
@@ -54,15 +58,15 @@ jobs:
         timeout-minutes: 3
         run: |
           test -n "$WINE" || { echo "FAIL: no wine binary"; exit 1; }
-          timeout 60 "$WINE" --version || echo "WARN: version failed"
+          "$WINE" --version || echo "WARN: version failed"
 
       - name: Prefix
         timeout-minutes: 8
         run: |
           export WINEPREFIX="$HOME/pfx" WINEDEBUG=-all
-          timeout 300 "$WINE" wineboot --init || echo "WARN: wineboot nonzero"
+          "$WINE" wineboot --init || echo "WARN: wineboot nonzero"
           sleep 30
-          timeout 60 "$WINE" cmd /c ver || echo "WARN: ver failed"
+          "$WINE" cmd /c ver || echo "WARN: ver failed"
           mkdir -p "$HOME/pfx/drive_c/stage"
 
       # Verified, not assumed - this step failed silently once already.
@@ -79,7 +83,7 @@ jobs:
           echo "url: $URL"
           curl -fL -o dotnet.exe "$URL" || { echo "RESULT: .NET download FAILED"; exit 1; }
           ls -la dotnet.exe
-          timeout 600 "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart \
+          "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart \
             || echo "WARN: installer returned nonzero"
           sleep 10
           # Verify, and report the exact version that landed.
