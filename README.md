@@ -46,7 +46,8 @@ not the cause.
 | Launcher boots on Wine 11.16 | ✅ **Verified in CI** (screenshot + video) |
 | Launcher fails on Wine 7.7 | ✅ Verified — 8 runs, every config |
 | .NET 6 installs into the prefix | ✅ Verified (6.0.29 and 6.0.36) |
-| Game files download via the launcher | ❓ Not tested (CI stops before a 5 GB torrent) |
+| Installer wizard advances | ✅ Verified |
+| **Game files download over P2P** | ✅ **Verified — 5.17 MB/s, "15 minutes remaining"** |
 | **The game itself renders** | ❓ **Not tested** — runners are VMs with no real GPU |
 
 CI runners report `Apple M1 (Virtual)`. They can prove installation and launcher
@@ -134,9 +135,16 @@ curl -fL -o launcher.exe \
 "$WINE" 'C:\stage\launcher.exe'
 ```
 
-The wizard should appear. Install to `C:\Program Files\ElDewrito` and
-**allow the firewall prompt** — deny it and the P2P download sits at 0% with no
-useful error.
+The wizard should appear. Install to `C:\Program Files\ElDewrito`, then expect
+**two** separate permission prompts:
+
+1. the **firewall** prompt the official guide mentions
+2. a macOS prompt — *"Allow <app> to find devices on local networks?"* — which
+   appears when the P2P download starts
+
+**Both must be allowed.** The second is undocumented anywhere we could find, and
+denying it stalls the torrent. Verified in CI: the download then runs at over
+5 MB/s and reports a realistic time remaining.
 
 ### 5. Config and launch — *guide steps 7–8*
 
