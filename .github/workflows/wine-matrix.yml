@@ -1,0 +1,122 @@
+# Isolates ONE variable: which Wine the ElDewrito launcher runs under.
+#
+# Run two: launcher loaded .NET 6.0.36 then threw a stack overflow under
+# GPTK 1.1 / wine-7.7, no window after 60s, though the process stayed alive.
+# Hypothesis: Wine 7.7 (2022) is too old for a modern .NET 6 app.
+#
+# A/B: the GPTK cask (wine 7.7) vs a current Wine build (11.18). Waits 5
+# minutes and detects windows via System Events rather than guessing from a
+# screenshot.
+#
+# NOTE: GitHub arm64 runners are VMs ("Apple M1 (Virtual)"). Launcher startup
+# is meaningful here; GPU rendering is not.
+
+name: wine-matrix
+on: workflow_dispatch
+
+jobs:
+  launcher:
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gptk-7.7
+            kind: cask
+          - name: wine-devel-11.18
+            kind: tarball
+
+    steps:
+      - name: Facts
+        run: |
+          uname -m; sw_vers -productVersion
+          /usr/bin/pgrep -q oahd && echo "Rosetta present" \
+            || softwareupdate --install-rosetta --agree-to-license
+
+      - name: Install GPTK cask
+        if: matrix.kind == 'cask'
+        run: |
+          brew install --cask gcenx/wine/game-porting-toolkit
+          xattr -dr com.apple.quarantine "/Applications/Game Porting Toolkit.app" 2>/dev/null || true
+          echo "WINE=$(command -v wine64)" >> "$GITHUB_ENV"
+
+      - name: Install Wine 11.18 tarball
+        if: matrix.kind == 'tarball'
+        run: |
+          mkdir -p "$HOME/wine"
+          curl -fL -o "$HOME/wine.tar.xz" \
+            "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz"
+          tar -xJf "$HOME/wine.tar.xz" -C "$HOME/wine" --strip-components=1
+          xattr -dr com.apple.quarantine "$HOME/wine" 2>/dev/null || true
+          W=$(find "$HOME/wine" -name 'wine64' -type f -perm -u+x | head -1)
+          [ -n "$W" ] || W=$(find "$HOME/wine" -name 'wine' -type f -perm -u+x | head -1)
+          echo "found: $W"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+
+      - name: Wine version
+        run: |
+          echo "using: $WINE"
+          "$WINE" --version || echo "WARN: version failed"
+
+      - name: Prefix and .NET
+        run: |
+          export WINEPREFIX="$HOME/pfx" WINEDEBUG=-all
+          "$WINE" wineboot --init || echo "WARN: wineboot nonzero"
+          sleep 30
+          "$WINE" cmd /c ver || echo "WARN: ver failed"
+          mkdir -p "$HOME/pfx/drive_c/stage"
+          cd "$HOME/pfx/drive_c/stage"
+          curl -fL -o dotnet.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
+          "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart || echo "WARN: installer nonzero"
+          ls "$HOME/pfx/drive_c/Program Files/dotnet" >/dev/null 2>&1 \
+            && echo "RESULT: .NET installed" || echo "RESULT: .NET MISSING"
+
+      - name: Start launcher
+        run: |
+          export WINEPREFIX="$HOME/pfx"
+          URL=$(curl -fsSL \
+            https://api.github.com/repos/eldewrito2/ElDewritoLauncher/releases/latest \
+            | grep -o 'https://[^"]*launcher\.exe' | head -1)
+          curl -fL -o "$HOME/pfx/drive_c/stage/launcher.exe" "$URL"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' \
+            > "$HOME/launcher.log" 2>&1 &
+          echo "started pid $!"
+
+      - name: Wait 5 minutes for a window
+        run: |
+          FOUND=no
+          for m in 1 2 3 4 5; do
+            sleep 60
+            echo "=== minute $m ==="
+            pgrep -fl 'launcher.exe' >/dev/null 2>&1 \
+              && echo "launcher process: alive" || echo "launcher process: GONE"
+            APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "osascript failed")
+            echo "foreground apps: $APPS"
+            if echo "$APPS" | grep -qiE 'wine|launcher|eldewrito'; then
+              echo "RESULT: GUI process detected at minute $m"
+              FOUND=yes
+            fi
+            /usr/sbin/screencapture -x "$HOME/m${m}.png" 2>/dev/null || true
+          done
+          echo "RESULT: window_detected=$FOUND"
+          echo "--- crash markers ---"
+          echo "stack overflow: $(grep -c 'stack overflow' "$HOME/launcher.log" 2>/dev/null || echo 0)"
+          echo "unhandled:      $(grep -ci 'unhandled exception' "$HOME/launcher.log" 2>/dev/null || echo 0)"
+          echo "--- log tail ---"
+          tail -40 "$HOME/launcher.log" 2>/dev/null || echo "no log"
+
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/ev
+          cp "$HOME"/m*.png /tmp/ev/ 2>/dev/null || true
+          cp "$HOME/launcher.log" /tmp/ev/ 2>/dev/null || true
+          "$WINE" --version > /tmp/ev/wine-version.txt 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matrix-${{ matrix.name }}
+          path: /tmp/ev
+          if-no-files-found: warn
