@@ -42,6 +42,32 @@ jobs:
             && echo "RESULT: /usr/local/bin/brew EXISTS" \
             || echo "RESULT: /usr/local/bin/brew ABSENT - x86_64 Homebrew unavailable"
 
+      # install.sh refuses on x86_64, but extracting the tarball bypasses that
+      # check. This decides whether Apple's documented GPTK route (and the
+      # official ElDewrito guide's step 1) is genuinely dead or merely slower.
+      - name: Can x86_64 Homebrew be installed via tarball?
+        continue-on-error: true
+        run: |
+          sudo mkdir -p /usr/local/homebrew
+          sudo chown -R "$(whoami)" /usr/local/homebrew
+          curl -fsSL https://github.com/Homebrew/brew/tarball/master \
+            | tar xz --strip 1 -C /usr/local/homebrew
+          echo "--- extracted? ---"
+          if [ -x /usr/local/homebrew/bin/brew ]; then
+            echo "RESULT: tarball extraction OK"
+          else
+            echo "RESULT: tarball extraction FAILED"; exit 0
+          fi
+          echo "--- does it run under Rosetta? ---"
+          if arch -x86_64 /usr/local/homebrew/bin/brew --version 2>&1 | head -3; then
+            echo "RESULT: x86_64 brew RUNS - official GPTK route still viable"
+          else
+            echo "RESULT: x86_64 brew refuses to run - official route dead"
+          fi
+          echo "--- can it resolve the GPTK formula? ---"
+          arch -x86_64 /usr/local/homebrew/bin/brew info apple/apple/game-porting-toolkit 2>&1 \
+            | head -8 || echo "RESULT: could not resolve Apple formula"
+
       - name: Homebrew in use
         run: |
           which brew
