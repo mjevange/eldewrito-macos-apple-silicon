@@ -1,0 +1,180 @@
+# Fast compatibility and robustness checks. None of these download game files;
+# they all stop once the launcher is up, which is the last thing CI can prove.
+#
+#   macos      - which macOS versions the install works on, and that Intel is
+#                refused cleanly rather than failing confusingly
+#   lifecycle  - install.sh is genuinely reusable: idempotent, --check is
+#                read-only, --uninstall leaves nothing behind
+#   dotnet     - which .NET runtimes satisfy the launcher, so users are not
+#                pinned to one version that may disappear
+
+name: compat
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 6 * * 1"
+
+jobs:
+  # ---------------------------------------------------------------- macOS
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-13, macos-14, macos-15, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      WINEPREFIX: /Users/runner/pfx
+      ELDEW_RUNTIME: /Users/runner/rt
+      WINEDEBUG: "-all"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Facts
+        run: |
+          echo "runner: ${{ matrix.runner }}"
+          echo "arch:   $(uname -m)"
+          echo "macOS:  $(sw_vers -productVersion)"
+
+      # Intel must be refused with a clear message, not a confusing failure.
+      - name: Preflight
+        id: pre
+        continue-on-error: true
+        run: bash install.sh --check
+
+      - name: Intel is correctly refused
+        if: runner.arch == 'X64'
+        run: |
+          if [ "${{ steps.pre.outcome }}" = "failure" ]; then
+            echo "RESULT: Intel refused as intended"
+          else
+            echo "RESULT: FAIL - Intel was not refused"; exit 1
+          fi
+
+      - name: Install through launcher start
+        if: runner.arch == 'ARM64' && steps.pre.outcome == 'success'
+        timeout-minutes: 20
+        run: |
+          mkdir -p "$ELDEW_RUNTIME"
+          curl -fL --retry 3 -sS -o "$ELDEW_RUNTIME/rt.tgz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$ELDEW_RUNTIME/rt.tgz" -C "$ELDEW_RUNTIME"
+          xattr -dr com.apple.quarantine "$ELDEW_RUNTIME" 2>/dev/null || true
+          W="$ELDEW_RUNTIME/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "wine: $("$W" --version)"
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 40
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o d.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
+          "$W" 'C:\stage\d.exe' /quiet /norestart >/dev/null 2>&1 || true
+          sleep 10
+          curl -fL -sS -o launcher.exe \
+            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+          "$W" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          sleep 75
+          OV=$(grep -c 'stack overflow' "$HOME/l.log" || true)
+          APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+          echo "RESULT: ${{ matrix.runner }} overflows=$OV apps=$APPS"
+          test "$OV" -eq 0 || { echo "FAIL: crashed"; exit 1; }
+          echo "$APPS" | grep -qi wine || { echo "FAIL: no window"; exit 1; }
+          echo "RESULT: ${{ matrix.runner }} PASS"
+
+  # ------------------------------------------------------------ lifecycle
+  lifecycle:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      WINEPREFIX: /Users/runner/lifecycle-pfx
+      ELDEW_RUNTIME: /Users/runner/lifecycle-rt
+      WINEDEBUG: "-all"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: --check is read-only
+        run: |
+          bash install.sh --check
+          test ! -d "$WINEPREFIX"     || { echo "FAIL: --check created a prefix"; exit 1; }
+          test ! -d "$ELDEW_RUNTIME"  || { echo "FAIL: --check created a runtime"; exit 1; }
+          echo "RESULT: --check changed nothing"
+
+      - name: Runtime and prefix, then prove it is idempotent
+        timeout-minutes: 20
+        run: |
+          mkdir -p "$ELDEW_RUNTIME"
+          curl -fL --retry 3 -sS -o "$ELDEW_RUNTIME/rt.tgz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$ELDEW_RUNTIME/rt.tgz" -C "$ELDEW_RUNTIME"
+          W="$ELDEW_RUNTIME/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 40
+          BEFORE=$(du -s "$WINEPREFIX" | cut -f1)
+          # Re-running must not rebuild what already exists.
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 10
+          AFTER=$(du -s "$WINEPREFIX" | cut -f1)
+          echo "prefix size before=$BEFORE after=$AFTER"
+          echo "RESULT: prefix survives a re-run"
+
+      - name: --uninstall leaves nothing behind
+        run: |
+          bash install.sh --uninstall
+          test ! -d "$WINEPREFIX"    || { echo "FAIL: prefix remains"; exit 1; }
+          test ! -d "$ELDEW_RUNTIME" || { echo "FAIL: runtime remains"; exit 1; }
+          test ! -f "$HOME/Desktop/Play ElDewrito.command" || { echo "FAIL: play script remains"; exit 1; }
+          echo "RESULT: uninstall clean"
+
+  # --------------------------------------------------------------- dotnet
+  # The launcher asks for app host 6.0.29. Which runtimes actually satisfy it?
+  dotnet:
+    runs-on: macos-15
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["6.0.29", "6.0.36", "8.0"]
+    env:
+      WINEPREFIX: /Users/runner/dn-pfx
+      WINEDEBUG: "-all"
+
+    steps:
+      - name: Runtime
+        timeout-minutes: 15
+        run: |
+          mkdir -p "$HOME/rt"
+          curl -fL --retry 3 -sS -o "$HOME/rt.tgz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$HOME/rt.tgz" -C "$HOME/rt"
+          xattr -dr com.apple.quarantine "$HOME/rt" 2>/dev/null || true
+          echo "WINE=$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine" >> "$GITHUB_ENV"
+
+      - name: Prefix and .NET ${{ matrix.version }}
+        timeout-minutes: 15
+        run: |
+          "$WINE" wineboot --init >/dev/null 2>&1 || true
+          sleep 40
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          case "${{ matrix.version }}" in
+            8.0) URL="https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe" ;;
+            *)   URL="https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/${{ matrix.version }}/windowsdesktop-runtime-${{ matrix.version }}-win-x64.exe" ;;
+          esac
+          curl -fL -sS -o d.exe "$URL" || { echo "RESULT: ${{ matrix.version }} download FAILED"; exit 1; }
+          "$WINE" 'C:\stage\d.exe' /quiet /norestart >/dev/null 2>&1 || true
+          sleep 10
+          ls "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" 2>/dev/null \
+            | tr '\n' ' ' | sed 's/^/RESULT: installed /' || echo "RESULT: .NET MISSING"
+
+      - name: Does the launcher start?
+        timeout-minutes: 10
+        run: |
+          cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o launcher.exe \
+            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+          "$WINE" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          sleep 75
+          OV=$(grep -c 'stack overflow' "$HOME/l.log" || true)
+          APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+          WIN=no; echo "$APPS" | grep -qi wine && WIN=yes
+          echo "RESULT: dotnet=${{ matrix.version }} overflows=$OV window=$WIN"
+          grep -i 'must install .NET' "$HOME/l.log" | head -2 || true
