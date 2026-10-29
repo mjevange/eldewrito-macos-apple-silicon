@@ -65,6 +65,9 @@ jobs:
           [ -n "$URL" ] || URL="https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
           curl -fL -o "$WINEPREFIX/drive_c/stage/launcher.exe" "$URL"
           WINEDEBUG=+err,+warn wine64 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          # 90s of actual video from launch, alongside the stills.
+          ( /usr/sbin/screencapture -v -V 90 "$HOME/${{ matrix.win }}-boot.mp4" >/dev/null 2>&1 || \
+            echo "video capture unavailable" ) &
           for m in 1 2 3; do
             sleep 60
             APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "?")
@@ -80,8 +83,11 @@ jobs:
       - name: Evidence
         if: always()
         run: |
-          mkdir -p /tmp/ev && cp "$HOME"/*.png /tmp/ev/ 2>/dev/null || true
+          mkdir -p /tmp/ev
+          cp "$HOME"/*.png /tmp/ev/ 2>/dev/null || true
+          cp "$HOME"/*.mp4 /tmp/ev/ 2>/dev/null || true
           cp "$HOME/l.log" /tmp/ev/ 2>/dev/null || true
+          ls -la /tmp/ev
       - uses: actions/upload-artifact@v4
         if: always()
         with:
