@@ -89,6 +89,23 @@ jobs:
           xattr -dr com.apple.quarantine "/Applications/Game Porting Toolkit.app" 2>/dev/null \
             && echo "quarantine cleared" || echo "nothing to clear"
 
+      # The cask calls itself 3.0-3 but wine reports GPTK 1.1 / wine-7.7.
+      # Pin down which is real, since an old Wine is the prime suspect for the
+      # launcher's stack overflow.
+      - name: GPTK version truth
+        run: |
+          echo "--- cask metadata ---"
+          brew info --cask gcenx/wine/game-porting-toolkit 2>&1 | head -12
+          echo "--- app bundle version ---"
+          defaults read "/Applications/Game Porting Toolkit.app/Contents/Info.plist" \
+            CFBundleShortVersionString 2>/dev/null || echo "(no version string)"
+          echo "--- what wine reports ---"
+          wine64 --version
+          echo "--- D3DMetal present? ---"
+          ls "/Applications/Game Porting Toolkit.app/Contents/Resources/"*/lib*/*D3DMetal* 2>/dev/null \
+            || find "/Applications/Game Porting Toolkit.app" -iname '*D3DMetal*' 2>/dev/null | head -3 \
+            || echo "RESULT: no D3DMetal found in bundle"
+
       - name: Locate wine64
         run: |
           which wine64 || echo "WARN: wine64 not on PATH"
