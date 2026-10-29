@@ -54,11 +54,14 @@ jobs:
           [ -n "$W" ] || W=$(find "$HOME/wine" -maxdepth 3 -name 'wine64' -type f -perm -u+x | head -1)
           echo "WINE=$W" >> "$GITHUB_ENV"
 
+      # Wine 11.18 tarball builds have been observed to BLOCK on --version.
+      # Guarded by timeout-minutes and allowed to fail so the job continues.
       - name: Wine version
         timeout-minutes: 3
+        continue-on-error: true
         run: |
           test -n "$WINE" || { echo "FAIL: no wine binary"; exit 1; }
-          "$WINE" --version || echo "WARN: version failed"
+          "$WINE" --version 2>&1 | tee /tmp/wine.txt
 
       - name: Prefix
         timeout-minutes: 8
@@ -127,7 +130,7 @@ jobs:
           mkdir -p /tmp/ev
           cp "$HOME"/m*.png /tmp/ev/ 2>/dev/null || true
           cp "$HOME/l.log" /tmp/ev/ 2>/dev/null || true
-          "$WINE" --version > /tmp/ev/wine.txt 2>&1 || true
+          cp /tmp/wine.txt /tmp/ev/wine.txt 2>/dev/null || echo "wine --version did not return" > /tmp/ev/wine.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
