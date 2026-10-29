@@ -17,7 +17,7 @@ on: workflow_dispatch
 jobs:
   launcher:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 75
     # Wine 11.18 blocked on prefix init: with no WINEPREFIX it built ~/.wine,
     # and the Mono/Gecko installer dialogs wait for a click that never comes.
     env:
@@ -62,15 +62,18 @@ jobs:
 
       # Wine 11.18 tarball builds have been observed to BLOCK on --version.
       # Guarded by timeout-minutes and allowed to fail so the job continues.
+      # Not necessarily hung: these are osx64 builds under Rosetta on a
+      # virtualised M1, and a cold wineboot spawns many Windows processes.
+      # Give it room before calling it a hang.
       - name: Wine version
-        timeout-minutes: 3
+        timeout-minutes: 12
         continue-on-error: true
         run: |
           test -n "$WINE" || { echo "FAIL: no wine binary"; exit 1; }
           "$WINE" --version 2>&1 | tee /tmp/wine.txt
 
       - name: Prefix
-        timeout-minutes: 8
+        timeout-minutes: 25
         run: |
           export WINEPREFIX="$HOME/pfx" WINEDEBUG=-all
           "$WINE" wineboot --init || echo "WARN: wineboot nonzero"
