@@ -19,10 +19,15 @@ jobs:
 
     steps:
       - name: Install the Whisky fork
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
-          URL=$(curl -fsSL https://api.github.com/repos/frankea/Whisky/releases/latest \
+          URL=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                https://api.github.com/repos/frankea/Whisky/releases/latest \
                 | grep -o 'https://[^"]*\.dmg' | head -1)
+          # Fall back to the known asset if the API misbehaves.
+          [ -n "$URL" ] || URL="https://github.com/frankea/Whisky/releases/download/app-v3.7.0/Whisky-3.7.0.dmg"
           echo "release asset: ${URL:-NONE}"
           test -n "$URL" || { echo "FAIL: no dmg in latest release"; exit 1; }
           curl -fL --retry 3 -sS -o "$HOME/whisky.dmg" "$URL"
@@ -79,10 +84,21 @@ jobs:
           /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
           sudo mkdir -p /usr/local/homebrew
           sudo chown -R "$(whoami)" /usr/local/homebrew
-          curl -fsSL https://github.com/Homebrew/brew/tarball/master \
+          # Homebrew refuses to operate from master ("no longer supported"),
+          # so fetch the latest TAGGED release instead.
+          TAG=$(curl -fsSL https://api.github.com/repos/Homebrew/brew/releases/latest \
+                | grep -m1 '"tag_name"' | cut -d'"' -f4)
+          echo "homebrew tag: ${TAG:-unknown}"
+          curl -fsSL "https://github.com/Homebrew/brew/archive/refs/tags/${TAG}.tar.gz" \
             | tar xz --strip 1 -C /usr/local/homebrew
+          echo "--- version ---"
           arch -x86_64 /usr/local/homebrew/bin/brew --version | head -2
-          echo "RESULT: x86_64 brew OK"
+          echo "--- can it actually DO anything? (the earlier test never checked) ---"
+          if arch -x86_64 /usr/local/homebrew/bin/brew search wine 2>&1 | tail -5; then
+            echo "RESULT: x86_64 brew operational"
+          else
+            echo "RESULT: x86_64 brew NOT operational"
+          fi
 
       # Previously this was continue-on-error, which hid the reason. Capture it.
       - name: Apple's tap - full error output

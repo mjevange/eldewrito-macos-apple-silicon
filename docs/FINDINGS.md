@@ -96,14 +96,23 @@ and conflicts with `wine-crossover`, `wine-stable`, `wine@devel`, `wine@staging`
   supported on Apple Silicon processors!` This silently breaks the "install an
   x86_64 Homebrew into /usr/local" step that every GPTK guide prescribes —
   `install.sh` exits and leaves you on the arm64 brew with no warning.
-- **The x86_64 Homebrew is still installable by tarball**, bypassing the
-  installer's arch check, and runs fine under Rosetta:
-  ```bash
-  sudo mkdir -p /usr/local/homebrew && sudo chown -R "$(whoami)" /usr/local/homebrew
-  curl -fsSL https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C /usr/local/homebrew
-  arch -x86_64 /usr/local/homebrew/bin/brew --version
+- **The x86_64 Homebrew tarball installs and prints a version, but cannot
+  install anything.** An earlier note here claimed this kept Apple's documented
+  GPTK route "slow, not dead". That was wrong, and the mistake is instructive:
+  the test only ran `brew --version`, which succeeds. Any actual operation
+  fails:
+
   ```
-  So **Apple's documented GPTK route remains viable** — it is slow, not dead.
+  Error: Homebrew's master branch is no longer supported.
+  ```
+
+  The tarball URL pulls Homebrew's **master branch**, which Homebrew now
+  refuses to operate from. Both `apple/apple` and `gcenx/apple` taps therefore
+  failed, and **neither produced a wine binary**.
+
+  Untested escape: fetching a **tagged release** tarball rather than master may
+  restore a working x86_64 Homebrew. Until someone confirms that, treat Apple's
+  own GPTK route as **blocked on current systems**, not merely slow.
 - **`gcenx/homebrew-wine` now contains only `game-porting-toolkit.rb`.**
   `wine-crossover` and `wine-stable` are gone from that tap, almost certainly
   collateral from Homebrew dropping Intel macOS.
