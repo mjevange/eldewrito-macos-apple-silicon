@@ -1,0 +1,175 @@
+# Runtime options and optimizations. No game download.
+#
+#   sync     - the official guide says launch with esync disabled. That advice
+#              predates Wine 11. Does esync, or the newer msync, work now? If
+#              so it is a free performance win.
+#   runtimes - wine-staging as an alternative to the verified winecx-gptk
+#              build, so the docs are not pinned to a single source.
+#   metrics  - concrete numbers for the docs: seconds to a window, disk used
+#              at each stage, peak memory.
+
+name: options
+on:
+  workflow_dispatch:
+
+env:
+  RUNTIME_URL: "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+  LAUNCHER_URL: "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+  DOTNET_URL: "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
+
+jobs:
+  # ------------------------------------------------------------------ sync
+  sync:
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [no-esync, esync, msync]
+    env:
+      WINEPREFIX: /Users/runner/sync-pfx
+      WINEDEBUG: "-all"
+
+    steps:
+      - name: Runtime, prefix, .NET, launcher
+        timeout-minutes: 20
+        run: |
+          mkdir -p "$HOME/rt"
+          curl -fL --retry 3 -sS -o "$HOME/rt.tgz" "$RUNTIME_URL"
+          tar -xzf "$HOME/rt.tgz" -C "$HOME/rt"
+          xattr -dr com.apple.quarantine "$HOME/rt" 2>/dev/null || true
+          W="$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 40
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o d.exe "$DOTNET_URL"
+          "$W" 'C:\stage\d.exe' /quiet /norestart >/dev/null 2>&1 || true
+          sleep 10
+          curl -fL -sS -o launcher.exe "$LAUNCHER_URL"
+
+      - name: Launch with ${{ matrix.mode }}
+        timeout-minutes: 10
+        run: |
+          case "${{ matrix.mode }}" in
+            no-esync) export WINEESYNC=0 ;;
+            esync)    export WINEESYNC=1 ;;
+            msync)    export WINEMSYNC=1 WINEESYNC=0 ;;
+          esac
+          START=$(date +%s)
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          WINDOW=no
+          for i in $(seq 1 24); do
+            sleep 5
+            APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+            if echo "$APPS" | grep -qi wine; then
+              echo "RESULT: mode=${{ matrix.mode }} seconds_to_window=$(( $(date +%s) - START ))"
+              WINDOW=yes; break
+            fi
+          done
+          sleep 20
+          echo "RESULT: mode=${{ matrix.mode }} window=$WINDOW overflows=$(grep -c 'stack overflow' "$HOME/l.log" || echo 0)"
+          grep -iE 'esync|msync' "$HOME/l.log" | head -5 || echo "(no sync messages in log)"
+
+  # -------------------------------------------------------------- runtimes
+  runtimes:
+    runs-on: macos-15
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [winecx-gptk, wine-staging]
+    env:
+      WINEPREFIX: /Users/runner/rt-pfx
+      WINEDEBUG: "-all"
+
+    steps:
+      - name: Fetch ${{ matrix.build }}
+        timeout-minutes: 15
+        run: |
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          mkdir -p "$HOME/rt"
+          if [ "${{ matrix.build }}" = "winecx-gptk" ]; then
+            curl -fL --retry 3 -sS -o "$HOME/rt.tgz" "$RUNTIME_URL"
+            tar -xzf "$HOME/rt.tgz" -C "$HOME/rt"
+            W="$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          else
+            curl -fL --retry 3 -sS -o "$HOME/rt.txz" \
+              "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-staging-11.18-osx64.tar.xz"
+            tar -xJf "$HOME/rt.txz" -C "$HOME/rt" --strip-components=1
+            W="$(find "$HOME/rt" -maxdepth 4 -name wine -type f -perm -u+x | head -1)"
+          fi
+          xattr -dr com.apple.quarantine "$HOME/rt" 2>/dev/null || true
+          echo "selected: ${W:-NONE}"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+
+      - name: Version
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          test -n "$WINE" || { echo "RESULT: ${{ matrix.build }} no binary"; exit 1; }
+          "$WINE" --version 2>&1 | grep -iE '^wine' | head -1 || echo "(version did not print)"
+
+      - name: Prefix, .NET, launcher
+        timeout-minutes: 25
+        continue-on-error: true
+        run: |
+          "$WINE" wineboot --init >/dev/null 2>&1 || true
+          sleep 50
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o d.exe "$DOTNET_URL"
+          "$WINE" 'C:\stage\d.exe' /quiet /norestart >/dev/null 2>&1 || true
+          sleep 10
+          ls "$WINEPREFIX/drive_c/Program Files/dotnet" >/dev/null 2>&1 \
+            && echo "RESULT: ${{ matrix.build }} dotnet=ok" || echo "RESULT: ${{ matrix.build }} dotnet=MISSING"
+          curl -fL -sS -o launcher.exe "$LAUNCHER_URL"
+          "$WINE" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          sleep 90
+          APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+          WIN=no; echo "$APPS" | grep -qi wine && WIN=yes
+          echo "RESULT: ${{ matrix.build }} window=$WIN overflows=$(grep -c 'stack overflow' "$HOME/l.log" || echo 0)"
+
+  # --------------------------------------------------------------- metrics
+  metrics:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      WINEPREFIX: /Users/runner/m-pfx
+      WINEDEBUG: "-all"
+
+    steps:
+      - name: Measure each stage
+        timeout-minutes: 25
+        run: |
+          t0=$(date +%s)
+          mkdir -p "$HOME/rt"
+          curl -fL --retry 3 -sS -o "$HOME/rt.tgz" "$RUNTIME_URL"
+          tar -xzf "$HOME/rt.tgz" -C "$HOME/rt"
+          rm -f "$HOME/rt.tgz"
+          echo "RESULT: runtime_seconds=$(( $(date +%s) - t0 )) runtime_disk=$(du -sh "$HOME/rt" | cut -f1)"
+          W="$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine"
+
+          t1=$(date +%s)
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 40
+          echo "RESULT: prefix_seconds=$(( $(date +%s) - t1 )) prefix_disk=$(du -sh "$WINEPREFIX" | cut -f1)"
+
+          t2=$(date +%s)
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o d.exe "$DOTNET_URL"
+          "$W" 'C:\stage\d.exe' /quiet /norestart >/dev/null 2>&1 || true
+          sleep 10
+          echo "RESULT: dotnet_seconds=$(( $(date +%s) - t2 )) prefix_disk_after_dotnet=$(du -sh "$WINEPREFIX" | cut -f1)"
+
+          curl -fL -sS -o launcher.exe "$LAUNCHER_URL"
+          t3=$(date +%s)
+          "$W" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          for i in $(seq 1 30); do
+            sleep 5
+            APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+            echo "$APPS" | grep -qi wine && { echo "RESULT: launcher_window_seconds=$(( $(date +%s) - t3 ))"; break; }
+          done
+          sleep 15
+          echo "RESULT: peak_rss_mb=$(ps -o rss= -p $(pgrep -f launcher.exe | head -1) 2>/dev/null | awk '{printf "%.0f", $1/1024}')"
+          echo "RESULT: total_install_seconds=$(( $(date +%s) - t0 ))"
+          echo "RESULT: total_disk=$(du -sh "$WINEPREFIX" "$HOME/rt" 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"
