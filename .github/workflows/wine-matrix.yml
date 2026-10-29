@@ -49,26 +49,34 @@ jobs:
             "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.18/wine-devel-11.18-osx64.tar.xz"
           tar -xJf "$HOME/wine.tar.xz" -C "$HOME/wine" --strip-components=1
           xattr -dr com.apple.quarantine "$HOME/wine" 2>/dev/null || true
-          W=$(find "$HOME/wine" -name 'wine64' -type f -perm -u+x | head -1)
-          [ -n "$W" ] || W=$(find "$HOME/wine" -name 'wine' -type f -perm -u+x | head -1)
-          echo "found: $W"
+          echo "--- what binaries shipped? ---"
+          find "$HOME/wine" -maxdepth 3 -name 'wine*' -type f -perm -u+x | head -10
+          # Wine 10+ merged the 64-bit binary into plain `wine` (wow64), so
+          # prefer `wine` and fall back to wine64 for older builds.
+          W=$(find "$HOME/wine" -maxdepth 3 -name 'wine' -type f -perm -u+x | head -1)
+          [ -n "$W" ] || W=$(find "$HOME/wine" -maxdepth 3 -name 'wine64' -type f -perm -u+x | head -1)
+          echo "selected: ${W:-NONE}"
           echo "WINE=$W" >> "$GITHUB_ENV"
 
       - name: Wine version
+        timeout-minutes: 3
         run: |
-          echo "using: $WINE"
-          "$WINE" --version || echo "WARN: version failed"
+          echo "using: ${WINE:-UNSET}"
+          test -n "$WINE" || { echo "FAIL: no wine binary found"; exit 1; }
+          file "$WINE"
+          # Never let a hung wine eat the whole job.
+          timeout 60 "$WINE" --version || echo "WARN: version timed out or failed"
 
       - name: Prefix and .NET
         run: |
           export WINEPREFIX="$HOME/pfx" WINEDEBUG=-all
-          "$WINE" wineboot --init || echo "WARN: wineboot nonzero"
+          timeout 180 "$WINE" wineboot --init || echo "WARN: wineboot nonzero"
           sleep 30
-          "$WINE" cmd /c ver || echo "WARN: ver failed"
+          timeout 60 "$WINE" cmd /c ver || echo "WARN: ver failed"
           mkdir -p "$HOME/pfx/drive_c/stage"
           cd "$HOME/pfx/drive_c/stage"
           curl -fL -o dotnet.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
-          "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart || echo "WARN: installer nonzero"
+          timeout 600 "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart || echo "WARN: installer nonzero"
           ls "$HOME/pfx/drive_c/Program Files/dotnet" >/dev/null 2>&1 \
             && echo "RESULT: .NET installed" || echo "RESULT: .NET MISSING"
 
