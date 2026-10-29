@@ -1,0 +1,125 @@
+# The last CI-testable unknown: does the download complete, and does the GAME
+# start?
+#
+# Everything up to "launcher boots and begins downloading" is verified. This
+# drives the wizard, lets the ~5GB P2P download finish, then runs eldorado.exe
+# and records exactly how it behaves.
+#
+# The runners have a paravirtualised GPU, so the game is NOT expected to render.
+# The point is to learn HOW it fails: a clean "no suitable device" is very
+# different from a crash in the install, and tells a real-hardware user which
+# failures to ignore and which to worry about.
+
+name: full-install
+on:
+  workflow_dispatch:
+    inputs:
+      download_minutes:
+        description: "Minutes to allow for the game download"
+        required: false
+        default: "30"
+
+jobs:
+  full:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      WINEPREFIX: /Users/runner/my-game-prefix
+      WINEDEBUG: "-all"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runtime, prefix, .NET, launcher binary
+        timeout-minutes: 30
+        run: |
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          mkdir -p "$HOME/rt"
+          curl -fL --retry 3 -sS -o "$HOME/rt.tar.gz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$HOME/rt.tar.gz" -C "$HOME/rt"
+          xattr -dr com.apple.quarantine "$HOME/rt" 2>/dev/null || true
+          W="$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+          "$W" --version
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 40
+          mkdir -p "$WINEPREFIX/drive_c/stage"; cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o dotnet.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" \
+            || curl -fL -sS -o dotnet.exe "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0.36/windowsdesktop-runtime-6.0.36-win-x64.exe"
+          "$W" 'C:\stage\dotnet.exe' /quiet /norestart >/dev/null 2>&1 || true
+          sleep 10
+          test -d "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" \
+            && echo "RESULT: .NET OK" || { echo "FAIL: .NET missing"; exit 1; }
+          curl -fL -sS -o launcher.exe \
+            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+
+      - name: Drive the wizard and download the game
+        timeout-minutes: 75
+        run: |
+          brew install --quiet cliclick 2>&1 | tail -1 || true
+          : > "$HOME/dl.log"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' >> "$HOME/dl.log" 2>&1 &
+          sleep 45
+          /usr/sbin/screencapture -x "$HOME/00-wizard.png" 2>/dev/null || true
+
+          # Coordinate click on Next, verified against an earlier capture.
+          for attempt in 1 2 3; do
+            osascript -e 'tell application "System Events" to tell process "launcher" to click button "Next" of window 1' 2>/dev/null \
+              && { echo "clicked Next (accessibility)"; break; }
+            command -v cliclick >/dev/null && cliclick c:713,527 && echo "clicked Next (coords, attempt $attempt)"
+            sleep 20
+            grep -q 'Downloading' "$HOME/dl.log" && break
+          done
+
+          N=${{ github.event.inputs.download_minutes || 30 }}
+          echo "Allowing up to $N minutes for the download"
+          DONE=no
+          for i in $(seq 1 "$N"); do
+            sleep 60
+            PCT=$(grep -oE 'Downloading [0-9.]+%' "$HOME/dl.log" | tail -1 || echo "n/a")
+            echo "[$i/$N] $PCT | prefix $(du -sh "$WINEPREFIX" 2>/dev/null | cut -f1)"
+            [ $((i % 5)) -eq 0 ] && /usr/sbin/screencapture -x "$HOME/dl-$i.png" 2>/dev/null || true
+            if [ -f "$WINEPREFIX/drive_c/Program Files/ElDewrito/eldorado.exe" ]; then
+              echo "RESULT: eldorado.exe present at minute $i"; DONE=yes; break
+            fi
+          done
+          echo "RESULT: download_complete=$DONE"
+          echo "RESULT: last_progress=$(grep -oE 'Downloading [0-9.]+%' "$HOME/dl.log" | tail -1 || echo none)"
+          find "$WINEPREFIX/drive_c/Program Files" -maxdepth 2 2>/dev/null | head -20
+
+      - name: Launch the game
+        if: always()
+        timeout-minutes: 15
+        run: |
+          G="$WINEPREFIX/drive_c/Program Files/ElDewrito"
+          if [ ! -f "$G/eldorado.exe" ]; then
+            echo "RESULT: game_launched=skipped (no eldorado.exe)"; exit 0
+          fi
+          echo "--- eldorado.exe ---"; file "$G/eldorado.exe"
+          mkdir -p "$G/data"
+          grep -q '^Game.CEFGpuEnable' "$G/data/dewrito_prefs.cfg" 2>/dev/null \
+            || echo 'Game.CEFGpuEnable 0' >> "$G/data/dewrito_prefs.cfg"
+          cd "$G"
+          WINEESYNC=0 WINEDEBUG=+err,+warn "$WINE" eldorado.exe > "$HOME/game.log" 2>&1 &
+          for m in 1 2 3; do
+            sleep 60
+            pgrep -f eldorado.exe >/dev/null && echo "min $m: alive" || echo "min $m: exited"
+            osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || true
+            /usr/sbin/screencapture -x "$HOME/game-m$m.png" 2>/dev/null || true
+          done
+          echo "RESULT: game_overflows=$(grep -c 'stack overflow' "$HOME/game.log" || echo 0)"
+          echo "RESULT: game_bytes=$(wc -c < "$HOME/game.log")"
+          echo "--- graphics/device errors ---"
+          grep -iE 'vulkan|metal|d3d|dxgi|adapter|device|GPU' "$HOME/game.log" | head -20 || echo none
+          echo "--- tail ---"; tail -30 "$HOME/game.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-install
+          path: |
+            /Users/runner/*.png
+            /Users/runner/dl.log
+            /Users/runner/game.log
+          if-no-files-found: warn
