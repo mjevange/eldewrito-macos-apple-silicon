@@ -40,8 +40,12 @@ jobs:
       - name: Drive the first-run UI
         timeout-minutes: 30
         run: |
-          brew install --quiet cliclick 2>&1 | tail -1 || true
-          open -a Whisky
+          # GitHub runs steps under `bash -e`, so a non-zero `open` aborts the
+          # whole step silently - which is exactly what happened last run.
+          set +e
+          brew install --quiet cliclick 2>&1 | tail -1
+          ls -la /Applications | grep -i whisky || echo "WARN: Whisky.app not in /Applications"
+          open -a Whisky; echo "open exit: $?"
           sleep 25
           /usr/sbin/screencapture -x "$HOME/w-00-open.png" 2>/dev/null || true
 
