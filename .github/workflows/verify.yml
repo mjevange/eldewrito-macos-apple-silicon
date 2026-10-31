@@ -22,7 +22,13 @@ on:
 
 jobs:
   install:
-    runs-on: macos-15
+    # macOS 14 is unsupported - the Wine prefix does not initialise there.
+    # See docs/FINDINGS.md.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-latest]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
       WINEPREFIX: /Users/runner/my-game-prefix

@@ -1,0 +1,91 @@
+# Does the Whisky GUI route use the same runtime we verified?
+#
+# Whisky installs cleanly but fetches its Wine only after GUI interaction, so
+# an earlier headless test could not tell. This drives the first-run UI with
+# cliclick - the same approach that successfully clicked through the ElDewrito
+# wizard - and reports what lands on disk.
+#
+# Why it matters: a GUI app is far easier for a non-technical user to maintain
+# than a shell script. If Whisky uses the verified runtime, the README can
+# recommend it as a real alternative rather than a guess.
+
+name: whisky
+on:
+  workflow_dispatch:
+
+jobs:
+  gui:
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - name: Install Whisky
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          URL=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                https://api.github.com/repos/frankea/Whisky/releases/latest \
+                | grep -o 'https://[^"]*\.dmg' | head -1)
+          [ -n "$URL" ] || URL="https://github.com/frankea/Whisky/releases/download/app-v3.7.0/Whisky-3.7.0.dmg"
+          echo "asset: $URL"
+          curl -fL --retry 3 -sS -o "$HOME/w.dmg" "$URL"
+          hdiutil attach "$HOME/w.dmg" -nobrowse -quiet -mountpoint /Volumes/W
+          cp -R /Volumes/W/*.app /Applications/
+          hdiutil detach /Volumes/W -quiet || true
+          xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
+          defaults read /Applications/Whisky.app/Contents/Info.plist CFBundleShortVersionString \
+            | sed 's/^/RESULT: whisky_version=/'
+
+      - name: Drive the first-run UI
+        timeout-minutes: 30
+        run: |
+          brew install --quiet cliclick 2>&1 | tail -1 || true
+          open -a Whisky
+          sleep 25
+          /usr/sbin/screencapture -x "$HOME/w-00-open.png" 2>/dev/null || true
+
+          # Whisky's first run offers to download its Wine. The button position
+          # is unknown, so try the accessibility API first and fall back to
+          # clicking the centre of the frontmost window.
+          for attempt in 1 2 3 4; do
+            osascript -e 'tell application "System Events" to tell process "Whisky" to click button 1 of window 1' 2>/dev/null \
+              && echo "clicked button 1 (accessibility), attempt $attempt" \
+              || echo "accessibility click failed, attempt $attempt"
+            sleep 20
+            /usr/sbin/screencapture -x "$HOME/w-0$attempt-click.png" 2>/dev/null || true
+            # Has anything started downloading?
+            D=$(find "$HOME/Library/Application Support" -maxdepth 3 -iname '*hisky*' 2>/dev/null | head -1)
+            [ -n "$D" ] && { echo "support dir: $D ($(du -sh "$D" 2>/dev/null | cut -f1))"; }
+          done
+
+          echo "--- wait for a runtime to land ---"
+          W=""
+          for i in $(seq 1 40); do
+            sleep 15
+            W=$(find "$HOME/Library" -maxdepth 9 -name 'wine*' -type f -perm -u+x 2>/dev/null | head -1)
+            [ -n "$W" ] && break
+          done
+
+          if [ -n "$W" ]; then
+            echo "RESULT: whisky_wine=$W"
+            "$W" --version 2>&1 | head -1 | sed 's/^/RESULT: whisky_wine_version=/'
+          else
+            echo "RESULT: whisky_wine=not-found"
+          fi
+
+          echo "--- version manifest, if present ---"
+          find "$HOME/Library" -iname 'WhiskyWineVersion.plist' 2>/dev/null | head -2 | while read -r p; do
+            echo "  $p"; plutil -p "$p" 2>/dev/null | head -12
+          done
+
+          echo "--- is it the same build we verified? ---"
+          echo "    verified: winecx-gptk runtime-v4.6.4 = wine-11.16, DXVK 1.10.3, DXMT 0.80"
+          /usr/sbin/screencapture -x "$HOME/w-99-final.png" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: whisky-gui
+          path: /Users/runner/w-*.png
+          if-no-files-found: warn

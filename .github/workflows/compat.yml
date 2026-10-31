@@ -185,3 +185,42 @@ jobs:
           WIN=no; echo "$APPS" | grep -qi wine && WIN=yes
           echo "RESULT: dotnet=${{ matrix.version }} overflows=$OV window=$WIN"
           grep -i 'must install .NET' "$HOME/l.log" | head -2 || true
+
+  # ------------------------------------------------------------ robustness
+  # A script strangers run unattended must fail clearly, not leave a
+  # half-built prefix and a confusing error.
+  robustness:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      WINEPREFIX: /Users/runner/rb-pfx
+      ELDEW_RUNTIME: /Users/runner/rb-rt
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A dead runtime URL fails with a useful message
+        run: |
+          set +e
+          OUT=$(ELDEW_RUNTIME_URL="https://github.com/frankea/winecx-gptk/releases/download/does-not-exist/x.tar.gz" \
+                bash install.sh 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT" | tail -8
+          test "$CODE" -ne 0 || { echo "FAIL: exited 0 on a dead URL"; exit 1; }
+          echo "$OUT" | grep -qi 'could not download' || { echo "FAIL: no useful message"; exit 1; }
+          echo "RESULT: dead URL handled, exit=$CODE"
+
+      - name: It left nothing half-built
+        run: |
+          if [ -d "$ELDEW_RUNTIME" ]; then
+            find "$ELDEW_RUNTIME" -type f | head -5
+            test -z "$(find "$ELDEW_RUNTIME" -name 'wine' -type f 2>/dev/null)" \
+              || { echo "FAIL: a broken runtime was left behind"; exit 1; }
+          fi
+          echo "RESULT: no usable-looking wreckage left"
+
+      - name: --check still works afterwards
+        run: |
+          bash install.sh --check
+          echo "RESULT: --check unaffected by the earlier failure"

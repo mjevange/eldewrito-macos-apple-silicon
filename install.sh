@@ -15,9 +15,10 @@
 
 set -euo pipefail
 
-RUNTIME_URL="https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
-LAUNCHER_URL="https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
-DOTNET_URL="https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
+# Overridable so users can pin versions and CI can test failure handling.
+RUNTIME_URL="${ELDEW_RUNTIME_URL:-https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz}"
+LAUNCHER_URL="${ELDEW_LAUNCHER_URL:-https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe}"
+DOTNET_URL="${ELDEW_DOTNET_URL:-https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe}"
 DOTNET_FALLBACK="https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0.36/windowsdesktop-runtime-6.0.36-win-x64.exe"
 
 RUNTIME_DIR="${ELDEW_RUNTIME:-$HOME/.eldewrito/runtime}"
@@ -66,8 +67,12 @@ install_runtime() {
     /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
     mkdir -p "$RUNTIME_DIR"
     echo "    downloading (459MB)..."
-    curl -fL --retry 3 --progress-bar -o "$RUNTIME_DIR/rt.tar.gz" "$RUNTIME_URL"
-    tar -xzf "$RUNTIME_DIR/rt.tar.gz" -C "$RUNTIME_DIR"
+    curl -fL --retry 3 --progress-bar -o "$RUNTIME_DIR/rt.tar.gz" "$RUNTIME_URL" \
+        || die "Could not download the Wine runtime from:
+  $RUNTIME_URL
+Check your connection, or set ELDEW_RUNTIME_URL to a mirror."
+    tar -xzf "$RUNTIME_DIR/rt.tar.gz" -C "$RUNTIME_DIR" \
+        || die "The runtime archive is corrupt. Delete $RUNTIME_DIR and re-run."
     rm -f "$RUNTIME_DIR/rt.tar.gz"
     # Gatekeeper flags downloaded binaries; Homebrew's --no-quarantine is gone.
     xattr -dr com.apple.quarantine "$RUNTIME_DIR" 2>/dev/null || true
