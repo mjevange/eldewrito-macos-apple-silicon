@@ -54,8 +54,13 @@ jobs:
             echo "RESULT: FAIL - Intel was not refused"; exit 1
           fi
 
+      # macOS 14 is EXPECTED to fail: the Wine prefix never initialises there
+      # (docs/FINDINGS.md). Kept in the matrix as a regression test - if a
+      # future runtime fixes it, this flips and the docs need updating.
       - name: Install through launcher start
+        id: run
         if: runner.arch == 'ARM64' && steps.pre.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 20
         run: |
           mkdir -p "$ELDEW_RUNTIME"
@@ -86,6 +91,25 @@ jobs:
           test "$OV" -eq 0 || { echo "FAIL: crashed"; exit 1; }
           echo "$APPS" | grep -qi wine || { echo "FAIL: no window"; exit 1; }
           echo "RESULT: ${{ matrix.runner }} PASS"
+
+      - name: Judge the result against what we expect
+        if: runner.arch == 'ARM64'
+        run: |
+          OUTCOME="${{ steps.run.outcome }}"
+          case "${{ matrix.runner }}" in
+            macos-14)
+              if [ "$OUTCOME" = "success" ]; then
+                echo "macOS 14 now WORKS - this contradicts docs/FINDINGS.md."
+                echo "That is good news: update the documented minimum."
+                exit 1
+              fi
+              echo "RESULT: macos-14 failed as expected (prefix does not initialise)"
+              ;;
+            *)
+              test "$OUTCOME" = "success" || { echo "FAIL: ${{ matrix.runner }} regressed"; exit 1; }
+              echo "RESULT: ${{ matrix.runner }} works as expected"
+              ;;
+          esac
 
   # ------------------------------------------------------------ lifecycle
   lifecycle:
