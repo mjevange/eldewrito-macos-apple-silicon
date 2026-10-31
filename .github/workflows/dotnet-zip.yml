@@ -1,0 +1,102 @@
+# Can we skip the .NET installer entirely?
+#
+# macOS 14 fails because the .NET Desktop Runtime *installer* will not run under
+# Wine. But Microsoft also publishes the runtime as a plain zip, which can be
+# extracted straight into the prefix - no Windows installer involved.
+#
+# If that works on macOS 14, Sonoma users need no OS upgrade. It may also be a
+# better method everywhere, since it removes an installer from the chain.
+
+name: dotnet-zip
+on:
+  workflow_dispatch:
+
+jobs:
+  zip:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      WINEPREFIX: /Users/runner/zp
+      WINEDEBUG: "-all"
+      ZIP_URL: "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0.36/windowsdesktop-runtime-6.0.36-win-x64.zip"
+
+    steps:
+      - name: Runtime and prefix
+        timeout-minutes: 20
+        run: |
+          sw_vers -productVersion
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          mkdir -p "$HOME/rt"
+          curl -fL --retry 3 -sS -o "$HOME/rt.tgz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$HOME/rt.tgz" -C "$HOME/rt"
+          xattr -dr com.apple.quarantine "$HOME/rt" 2>/dev/null || true
+          W="$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+          "$W" --version
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 60
+          mkdir -p "$WINEPREFIX/drive_c/stage"
+
+      - name: Extract .NET from the zip
+        timeout-minutes: 10
+        run: |
+          cd "$HOME"
+          curl -fL --retry 3 -sS -o dn.zip "$ZIP_URL"
+          ls -la dn.zip
+          D="$WINEPREFIX/drive_c/Program Files/dotnet"
+          mkdir -p "$D"
+          unzip -q dn.zip -d "$D"
+          echo "--- layout ---"
+          ls "$D" | head -10
+          echo "--- desktop runtime present? ---"
+          ls "$D/shared/Microsoft.WindowsDesktop.App" 2>&1 | head -3
+          test -d "$D/shared/Microsoft.WindowsDesktop.App" \
+            && echo "RESULT: ${{ matrix.runner }} zip_extract=OK" \
+            || { echo "RESULT: ${{ matrix.runner }} zip_extract=FAILED"; exit 1; }
+          test -f "$D/dotnet.exe" && echo "RESULT: dotnet.exe present" || echo "WARN: no dotnet.exe"
+
+      # The app host finds .NET by registry key or DOTNET_ROOT, so the zip
+      # layout alone may not be enough.
+      - name: Register it so the app host can find it
+        run: |
+          "$WINE" reg add 'HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x64' \
+            /v InstallLocation /t REG_SZ /d 'C:\Program Files\dotnet\' /f 2>&1 | tail -2 || true
+          "$WINE" reg add 'HKLM\SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost' \
+            /v Version /t REG_SZ /d '6.0.36' /f 2>&1 | tail -2 || true
+          echo "registry keys written"
+
+      - name: Does the launcher start?
+        timeout-minutes: 12
+        run: |
+          cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o launcher.exe \
+            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
+          DOTNET_ROOT='C:\Program Files\dotnet' WINEDEBUG=+err,+warn \
+            "$WINE" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          WIN=no
+          for i in $(seq 1 24); do
+            sleep 5
+            APPS=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "")
+            if echo "$APPS" | grep -qi wine; then
+              echo "RESULT: ${{ matrix.runner }} window at $((i*5))s"; WIN=yes; break
+            fi
+          done
+          /usr/sbin/screencapture -x "$HOME/${{ matrix.runner }}-zip.png" 2>/dev/null || true
+          echo "RESULT: ${{ matrix.runner }} zip_window=$WIN overflows=$(grep -c 'stack overflow' "$HOME/l.log" || echo 0)"
+          echo "--- does it still ask for .NET? ---"
+          grep -i 'must install' "$HOME/l.log" | head -2 || echo "(no .NET complaint)"
+          echo "--- errors ---"; grep -E ':err:' "$HOME/l.log" | sort -u | head -12 || echo none
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zip-${{ matrix.runner }}
+          path: |
+            /Users/runner/*.png
+            /Users/runner/l.log
+          if-no-files-found: warn
