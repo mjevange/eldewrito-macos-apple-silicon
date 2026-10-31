@@ -10,6 +10,7 @@ bash install.sh
 ```
 
 Requires **Apple Silicon**, **macOS 15 (Sequoia) or newer**, and ~15 GB free.
+Install takes about **3 minutes** plus the game download.
 Intel Macs cannot run this — [see why](#intel-macs).
 
 [![verify](https://github.com/mjevange/eldewrito-macos-apple-silicon/actions/workflows/verify.yml/badge.svg)](https://github.com/mjevange/eldewrito-macos-apple-silicon/actions/workflows/verify.yml)
@@ -80,6 +81,19 @@ When it finishes you get `~/Desktop/Play ElDewrito.command`.
 with that dialog sitting on screen unanswered for its entire 25-minute run, so
 it is not required. Allow it anyway if you have other machines on your LAN —
 it only governs local peer discovery — but ignoring it will not stall anything.
+
+### Sync modes
+
+The official guide launches with esync disabled. On Wine 11.16 both `esync` and
+`msync` also work, and msync is macOS-native. In-game effects are untested, so
+the default stays conservative — try an alternative with:
+
+```bash
+ELDEW_SYNC=msync ~/Desktop/Play\ ElDewrito.command
+```
+
+If it helps (or hurts) on real hardware, that is worth
+[reporting](https://github.com/mjevange/eldewrito-macos-apple-silicon/issues/new/choose).
 
 ### Playing
 

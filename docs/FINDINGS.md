@@ -299,6 +299,66 @@ Given the maintainer also publishes `winecx-gptk`, it very likely uses the same
 runtime verified here, but that is **inference, not measurement**. Anyone using
 Whisky successfully is welcome to confirm it.
 
+## 3g. Sync modes: the guide's `no-esync` advice is stale
+
+The official guide launches with `gameportingtoolkit-no-esync`. That predates
+Wine 11 by years. On Wine 11.16 all three modes start the launcher cleanly:
+
+| Mode | Window | Crashes |
+|---|---|---|
+| `WINEESYNC=0` (the guide's advice) | 22 s | 0 |
+| `WINEESYNC=1` | **16 s** | 0 |
+| `WINEMSYNC=1` | 17 s | 0 |
+
+msync is confirmed genuinely active rather than silently ignored — the Wine log
+shows it bootstrapping:
+
+```
+msync: bootstrapped mach port on wine-35f505-msync.
+msync: up and running.
+```
+
+**What this does and does not establish.** That esync and msync *work* is solid:
+a window appeared, zero crashes, and msync logged itself up. That either is
+*faster* is suggestive only — one sample each, and 16 vs 22 seconds is within
+runner noise.
+
+Sync primitives matter mainly for **in-game** performance, which has not been
+tested, so `install.sh` still defaults to the guide's conservative `WINEESYNC=0`.
+The play script honours an override, so a user on real hardware can try:
+
+```bash
+ELDEW_SYNC=msync ~/Desktop/Play\ ElDewrito.command
+```
+
+and report whether it helps. Changing the default on launcher-only evidence
+would be exactly the inference-over-measurement mistake these notes record
+elsewhere.
+
+## 3h. How long it takes and how much space
+
+Measured end to end on a `macos-15` runner, excluding game files:
+
+| Stage | Time | Disk after |
+|---|---|---|
+| Runtime download and extract | 8 s | 1.3 GB |
+| Wine prefix creation | 87 s | 635 MB |
+| .NET 6 install | 32 s | 958 MB |
+| Launcher to visible window | 15 s | — |
+| **Total install** | **158 s** | **~2.3 GB** |
+
+Peak launcher memory: **290 MB**. Add ~5.7 GB for game files, so budget ~8 GB
+rather than the 15 GB the preflight demands — that figure is deliberately
+conservative.
+
+## 3i. Community corroboration: none
+
+Asked in the ElDewrito Discord (28 Oct 2026) whether anyone had used the gdoc's
+macOS steps. The only reply confirmed Linux works and that nobody there had
+tried macOS. So the guide's macOS section remains, as far as can be determined,
+a single uncorroborated contribution — which is consistent with the stale
+assumptions found in it, and means the verification here may be the first.
+
 ## 4. What CI can and cannot prove
 
 GitHub's arm64 runners report:

@@ -159,8 +159,15 @@ write_play_script() {
 #!/bin/bash
 # Launch ElDewrito. Guide step 8: esync disabled.
 export WINEPREFIX="$PREFIX"
-export WINEESYNC=0
 export WINEDEBUG=-all
+# The official guide says esync off. On Wine 11.16 esync and msync both work
+# for the launcher, but in-game effects are untested, so default stays off.
+#   ELDEW_SYNC=esync|msync to try them.
+case "${ELDEW_SYNC:-off}" in
+  esync) export WINEESYNC=1 ;;
+  msync) export WINEMSYNC=1; export WINEESYNC=0 ;;
+  *)     export WINEESYNC=0 ;;
+esac
 GAME="$GAME_DIR"
 if [ ! -f "\$GAME/eldorado.exe" ]; then
   GAME="\$(find "$PREFIX/drive_c" -maxdepth 5 -iname eldorado.exe 2>/dev/null | head -1 | xargs -r dirname)"
