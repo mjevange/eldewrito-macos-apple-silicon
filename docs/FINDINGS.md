@@ -239,9 +239,24 @@ Tested across three runner images, same runtime, same steps:
 | `macos-15` | 15.7.9 | 11.16 | ✅ **22 seconds** |
 | `macos-latest` | 26.6.2 | 11.16 | ✅ **22 seconds** |
 
-Because 15 and 26 produce a window in 22 seconds, a four-minute poll finding
-nothing on 14 is not slowness. Wine itself ran — it reported `wine-11.16` and
-logged **zero** stack overflows — but no window ever appeared.
+**The cause is now known, and it is not windowing.** On macOS 14 the **.NET 6
+Desktop Runtime installer does not install** under Wine. The missing window was
+the downstream symptom: a launcher with no .NET cannot start.
+
+```
+macOS 15.8.2  ✓ wine-11.16   ✓ .NET installed: 6.0.36   → window at 15 s
+macOS 14.8.9  ✓ wine-11.16   ✗ .NET did not install after 5 minutes
+```
+
+Everything before .NET passes identically on both: Apple Silicon, free space,
+Rosetta 2, `wine-11.16`, prefix created.
+
+Worth noting how this was missed for several runs. The `compat` tests ran the
+.NET install inline **without verifying it**, so on macOS 14 they proceeded to a
+launcher that had nothing to run on, and the visible symptom was "no window".
+Only `install.sh`, which does verify, surfaced the real failure. The first fix
+attempted — replacing a fixed `sleep 10` with a five-minute poll — did not help,
+confirming it is a genuine failure rather than a race.
 
 **This corrects the requirement.** Earlier notes said "macOS 14 (Sonoma) or
 newer", taken from Apple's GPTK documentation rather than tested. The

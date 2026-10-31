@@ -1,0 +1,112 @@
+# Why won't .NET install under Wine on macOS 14?
+#
+# macOS 14.8.9 fails at the .NET step with a 5-minute poll, while 15.8.2
+# installs 6.0.36 and shows a launcher window in 15 seconds. Everything before
+# .NET passes on both: Apple Silicon, Rosetta, wine-11.16, prefix created.
+#
+# install.sh suppresses the installer's output, so the error has never been
+# seen. This captures it, and tries alternatives - a workaround would save
+# Sonoma users an OS upgrade.
+
+name: macos14-dotnet
+on:
+  workflow_dispatch:
+
+jobs:
+  dotnet:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      WINEPREFIX: /Users/runner/dn
+      WINEDEBUG: "-all"
+
+    steps:
+      - name: Runtime and prefix
+        timeout-minutes: 20
+        run: |
+          sw_vers -productVersion
+          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
+          mkdir -p "$HOME/rt"
+          curl -fL --retry 3 -sS -o "$HOME/rt.tgz" \
+            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
+          tar -xzf "$HOME/rt.tgz" -C "$HOME/rt"
+          xattr -dr com.apple.quarantine "$HOME/rt" 2>/dev/null || true
+          W="$HOME/rt/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "WINE=$W" >> "$GITHUB_ENV"
+          "$W" --version
+          "$W" wineboot --init >/dev/null 2>&1 || true
+          sleep 60
+          "$W" cmd /c ver || echo "WARN: cmd ver failed"
+          mkdir -p "$WINEPREFIX/drive_c/stage"
+
+      # The error has never been captured - install.sh sends it to /dev/null.
+      - name: .NET 6.0.36 with full output
+        id: net6
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o d6.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe"
+          ls -la d6.exe; file d6.exe
+          echo "--- installer output (quiet mode) ---"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\d6.exe' /quiet /norestart 2>&1 | tail -40 || true
+          echo "--- did it land? ---"
+          for i in $(seq 1 24); do
+            [ -d "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" ] && break
+            sleep 5
+          done
+          if [ -d "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" ]; then
+            echo "RESULT: ${{ matrix.runner }} net6_quiet=OK $(ls "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App")"
+          else
+            echo "RESULT: ${{ matrix.runner }} net6_quiet=FAILED"
+            echo "--- what IS in Program Files? ---"
+            ls -la "$WINEPREFIX/drive_c/Program Files" 2>&1 | head
+            echo "--- installer logs in the prefix? ---"
+            find "$WINEPREFIX/drive_c" -iname '*dotnet*log*' -o -iname 'Microsoft_*.log' 2>/dev/null | head -5
+            exit 1
+          fi
+
+      # Non-quiet may surface a dialog explaining the refusal.
+      - name: Retry without /quiet, capture the screen
+        if: steps.net6.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          cd "$WINEPREFIX/drive_c/stage"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\d6.exe' /norestart > "$HOME/gui.log" 2>&1 &
+          for t in 30 60 90; do
+            sleep 30
+            /usr/sbin/screencapture -x "$HOME/${{ matrix.runner }}-net-${t}s.png" 2>/dev/null || true
+            osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || true
+          done
+          echo "--- errors ---"; grep -E ':err:' "$HOME/gui.log" | sort -u | head -20 || echo none
+          echo "--- tail ---"; tail -25 "$HOME/gui.log"
+
+      - name: Try .NET 8 instead
+        if: steps.net6.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 12
+        run: |
+          cd "$WINEPREFIX/drive_c/stage"
+          curl -fL -sS -o d8.exe "https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe"
+          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\d8.exe' /quiet /norestart 2>&1 | tail -25 || true
+          for i in $(seq 1 24); do
+            [ -d "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" ] && break
+            sleep 5
+          done
+          [ -d "$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" ] \
+            && echo "RESULT: ${{ matrix.runner }} net8=OK - WORKAROUND FOUND" \
+            || echo "RESULT: ${{ matrix.runner }} net8=FAILED too"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: net-${{ matrix.runner }}
+          path: |
+            /Users/runner/*.png
+            /Users/runner/gui.log
+          if-no-files-found: warn
