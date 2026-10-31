@@ -4,6 +4,7 @@
 #
 #   bash install.sh            # install
 #   bash install.sh --check    # verify prerequisites only, change nothing
+#   bash install.sh --prepare  # everything except running the launcher wizard
 #   bash install.sh --uninstall
 #
 # Follows the official guide's macOS steps 2-8 unchanged
@@ -108,6 +109,16 @@ install_dotnet() {
     ok "installed"
 }
 
+stage_launcher() {
+    say "Staging the launcher"
+    # The launcher installs into its own directory, so stage it where the
+    # game should live rather than in a scratch folder.
+    mkdir -p "$GAME_DIR"
+    cd "$GAME_DIR"
+    [ -f launcher.exe ] || curl -fL --progress-bar -o launcher.exe "$LAUNCHER_URL"
+    ok "launcher.exe staged in $GAME_DIR"
+}
+
 run_launcher() {
     say "ElDewrito launcher (guide step 6)"
     export WINEPREFIX="$PREFIX" WINEDEBUG=-all
@@ -193,6 +204,12 @@ uninstall() {
 # ----------------------------------------------------------------- main
 case "${1:-}" in
     --check)     preflight; say "Prerequisites OK - nothing was changed"; exit 0 ;;
+    --prepare)   # everything except the interactive wizard, so CI can test this script
+                 preflight; install_runtime; create_prefix; install_dotnet
+                 stage_launcher; write_play_script
+                 say "Prepared. Run the launcher to download the game:"
+                 echo "    \"$WINE\" 'C:\\Program Files\\ElDewrito\\launcher.exe'"
+                 exit 0 ;;
     --uninstall) uninstall; exit 0 ;;
     -h|--help)   sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
@@ -201,6 +218,7 @@ preflight
 install_runtime
 create_prefix
 install_dotnet
+stage_launcher
 run_launcher
 configure
 write_play_script

@@ -35,67 +35,35 @@ jobs:
       - name: Preflight
         run: bash install.sh --check
 
-      - name: Runtime, prefix and .NET
+      # Run the real script, not a re-implementation of its steps.
+      - name: install.sh --prepare
         timeout-minutes: 30
+        run: bash install.sh --prepare
+
+      - name: Assert what the script produced
         run: |
-          # install.sh's launcher step is interactive, so drive the
-          # non-interactive parts directly and assert on each.
-          source /dev/stdin <<'SH'
-          set -euo pipefail
-          RT="$ELDEW_RUNTIME"
-          mkdir -p "$RT"
-          curl -fL --retry 3 -sS -o "$RT/rt.tar.gz" \
-            "https://github.com/frankea/winecx-gptk/releases/download/runtime-v4.6.4/Libraries.tar.gz"
-          tar -xzf "$RT/rt.tar.gz" -C "$RT"
-          xattr -dr com.apple.quarantine "$RT" 2>/dev/null || true
-          W="$RT/Libraries/Wine/lib/wine/x86_64-unix/wine"
-          test -x "$W" || { echo "FAIL: wine binary missing"; exit 1; }
+          W="$ELDEW_RUNTIME/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          test -x "$W" || { echo "FAIL: no wine binary"; exit 1; }
           echo "WINE=$W" >> "$GITHUB_ENV"
-          "$W" --version
-          SH
-
-      - name: Assert Wine version
-        run: |
-          V="$("$WINE" --version)"
-          echo "wine: $V"
+          V="$("$W" --version)"; echo "wine: $V"
           # Wine 7.x cannot run the launcher - see docs/FINDINGS.md.
-          case "$V" in
-            wine-7.*) echo "FAIL: Wine 7.x will not run the launcher"; exit 1 ;;
-          esac
+          case "$V" in wine-7.*) echo "FAIL: Wine 7.x will not run the launcher"; exit 1 ;; esac
 
-      - name: Prefix
-        timeout-minutes: 15
-        run: |
-          "$WINE" wineboot --init >/dev/null 2>&1 || true
-          sleep 40
-          test -d "$WINEPREFIX/drive_c/windows" || { echo "FAIL: prefix not initialised"; exit 1; }
-          mkdir -p "$WINEPREFIX/drive_c/stage"
-          "$WINE" cmd /c ver || true
-
-      - name: .NET 6 Desktop Runtime
-        timeout-minutes: 15
-        run: |
-          cd "$WINEPREFIX/drive_c/stage"
-          curl -fL -sS -o dotnet.exe "https://aka.ms/dotnet/6.0/windowsdesktop-runtime-win-x64.exe" \
-            || curl -fL -sS -o dotnet.exe "https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/6.0.36/windowsdesktop-runtime-6.0.36-win-x64.exe"
-          "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart >/dev/null 2>&1 || true
-          sleep 10
+          test -d "$WINEPREFIX/drive_c/windows" || { echo "FAIL: prefix missing"; exit 1; }
           D="$WINEPREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App"
-          test -d "$D" || { echo "FAIL: .NET did not install"; exit 1; }
-          echo "installed: $(ls "$D" | tr '\n' ' ')"
+          test -d "$D" || { echo "FAIL: .NET missing"; exit 1; }
+          echo ".NET: $(ls "$D" | tr '\n' ' ')"
 
-      - name: Launcher binary
-        run: |
-          cd "$WINEPREFIX/drive_c/stage"
-          curl -fL -sS -o launcher.exe \
-            "https://github.com/eldewrito2/ElDewritoLauncher/releases/download/0.1.1/launcher.exe"
-          file launcher.exe
-          test -s launcher.exe || { echo "FAIL: launcher.exe empty"; exit 1; }
+          L="$WINEPREFIX/drive_c/Program Files/ElDewrito/launcher.exe"
+          test -s "$L" || { echo "FAIL: launcher not staged"; exit 1; }
+          file "$L"
+          test -x "$HOME/Desktop/Play ElDewrito.command" || { echo "FAIL: no play script"; exit 1; }
+          echo "PASS: install.sh produced a complete install"
 
       - name: Launcher starts and renders a window
         timeout-minutes: 10
         run: |
-          WINEDEBUG=+err,+warn "$WINE" 'C:\stage\launcher.exe' > "$HOME/l.log" 2>&1 &
+          WINEDEBUG=+err,+warn "$WINE" 'C:\Program Files\ElDewrito\launcher.exe' > "$HOME/l.log" 2>&1 &
           sleep 90
           /usr/sbin/screencapture -x "$HOME/launcher.png" 2>/dev/null || true
 

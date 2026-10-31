@@ -1,0 +1,86 @@
+# Why does macOS 14 show no launcher window?
+#
+# Established: on macos-14 Wine runs (reports 11.16) and logs zero crashes, but
+# no window appears in four minutes, while macos-15 and macos-26 show one in 22
+# seconds. That is the difference between "upgrade to Sequoia" and "this works
+# fine, our test was wrong", so it is worth diagnosing rather than assuming.
+#
+# Runs 14 and 15 side by side with identical steps, capturing everything:
+# screenshots, the complete Wine log, the window list, and process state.
+
+name: macos14
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      WINEPREFIX: /Users/runner/my-game-prefix
+      ELDEW_RUNTIME: /Users/runner/.eldewrito/runtime
+      WINEDEBUG: "-all"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Machine
+        run: |
+          echo "runner:  ${{ matrix.runner }}"
+          sw_vers
+          sysctl -n machdep.cpu.brand_string
+          echo "displays:"
+          system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Chipset|Resolution|Metal' | head -6
+          echo "logged-in GUI session?"
+          who | head -3
+          launchctl print gui/$(id -u) 2>/dev/null | head -3 || echo "  (no gui domain)"
+
+      - name: Prepare via install.sh
+        timeout-minutes: 30
+        run: bash install.sh --prepare
+
+      - name: Launch and observe closely
+        timeout-minutes: 12
+        run: |
+          W="$ELDEW_RUNTIME/Libraries/Wine/lib/wine/x86_64-unix/wine"
+          echo "wine: $("$W" --version)"
+          # Full logging, not just crash counts.
+          WINEDEBUG=+err,+warn,+win,+x11drv "$W" \
+            'C:\Program Files\ElDewrito\launcher.exe' > "$HOME/full.log" 2>&1 &
+          PID=$!
+          echo "pid $PID"
+
+          for i in $(seq 1 16); do
+            sleep 15
+            T=$((i * 15))
+            ALIVE=$(pgrep -f launcher.exe >/dev/null && echo yes || echo no)
+            FG=$(osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>/dev/null || echo "?")
+            # Count real windows, not just foreground apps.
+            WC=$(osascript -e 'tell application "System Events" to count windows of every process' 2>/dev/null | tr ',' '+' | bc 2>/dev/null || echo "?")
+            echo "[${T}s] alive=$ALIVE windows=$WC fg=$FG"
+            /usr/sbin/screencapture -x "$HOME/${{ matrix.runner }}-${T}s.png" 2>/dev/null || true
+            echo "$FG" | grep -qi wine && { echo "RESULT: ${{ matrix.runner }} window at ${T}s"; break; }
+          done
+
+          echo "RESULT: ${{ matrix.runner }} log_bytes=$(wc -c < "$HOME/full.log")"
+          echo "RESULT: ${{ matrix.runner }} overflows=$(grep -c 'stack overflow' "$HOME/full.log" || echo 0)"
+          echo "RESULT: ${{ matrix.runner }} alive_at_end=$(pgrep -f launcher.exe >/dev/null && echo yes || echo no)"
+          echo "--- errors only ---"
+          grep -E ':err:' "$HOME/full.log" | sort -u | head -25 || echo "(no err lines)"
+          echo "--- window/driver activity ---"
+          grep -iE 'winemac|x11drv|CreateWindow|ShowWindow|display' "$HOME/full.log" | head -15 || echo "(none)"
+          echo "--- tail ---"
+          tail -25 "$HOME/full.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos14-${{ matrix.runner }}
+          path: |
+            /Users/runner/*.png
+            /Users/runner/full.log
+          if-no-files-found: warn
