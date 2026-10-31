@@ -239,9 +239,40 @@ Tested across three runner images, same runtime, same steps:
 | `macos-15` | 15.7.9 | 11.16 | ✅ **22 seconds** |
 | `macos-latest` | 26.6.2 | 11.16 | ✅ **22 seconds** |
 
-**The cause is now known, and it is not windowing.** On macOS 14 the **.NET 6
-Desktop Runtime installer does not install** under Wine. The missing window was
-the downstream symptom: a launcher with no .NET cannot start.
+**Root cause: the Wine prefix never initialises on macOS 14.** Not windowing,
+and not .NET either — both were symptoms three layers downstream.
+
+`wineboot --init` appears to run, but the Windows filesystem is never built and
+no Windows binary executes:
+
+```
+ls: /Users/runner/dn/drive_c/Program Files: No such file or directory
+WARN: cmd ver failed          # wine cmd /c ver - the simplest possible binary
+```
+
+Wine's Unix-side binary runs fine — `wine --version` correctly reports
+`wine-11.16` — which is what made this so misleading. The runtime looks
+installed and healthy right up until something needs to execute Windows code.
+
+The full chain: prefix never initialises → no Windows binary runs → the .NET
+installer fails → the launcher has no runtime → no window appears. Each earlier
+diagnosis was correct about its own layer and wrong about the cause.
+
+Confirmed across three independent test designs (`compat`, `macos14`,
+`macos14-dotnet`, `dotnet-zip`), every one failing on 14.8.9 and passing on
+15.8.2 and 26.6.2.
+
+**Workarounds that do not help:**
+
+- Polling five minutes for the .NET install instead of sleeping 10 seconds
+- Installing .NET 8 instead of 6
+- Extracting the .NET runtime from Microsoft's zip and writing the app host's
+  registry keys, bypassing the installer entirely — the extraction succeeds, but
+  nothing can run it. On macOS 15 this produces only the "You must install .NET"
+  dialog, so the zip route is not a valid install method on any version.
+
+None of these can work, because they all still require executing a Windows
+binary in a prefix that does not function.
 
 ```
 macOS 15.8.2  ✓ wine-11.16   ✓ .NET installed: 6.0.36   → window at 15 s
