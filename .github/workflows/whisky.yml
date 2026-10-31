@@ -45,19 +45,28 @@ jobs:
           sleep 25
           /usr/sbin/screencapture -x "$HOME/w-00-open.png" 2>/dev/null || true
 
-          # Whisky's first run offers to download its Wine. The button position
-          # is unknown, so try the accessibility API first and fall back to
-          # clicking the centre of the frontmost window.
-          for attempt in 1 2 3 4; do
-            osascript -e 'tell application "System Events" to tell process "Whisky" to click button 1 of window 1' 2>/dev/null \
-              && echo "clicked button 1 (accessibility), attempt $attempt" \
-              || echo "accessibility click failed, attempt $attempt"
-            sleep 20
+          # The first-run sheet is "Dependencies Setup", listing Rosetta and
+          # WhiskyWine with Quit and Next. It is a SwiftUI sheet, so
+          # "button 1 of window 1" does not map to it - target the button by
+          # NAME, and fall back to clicking Next's observed position.
+          echo "--- what does accessibility see? ---"
+          osascript -e 'tell application "System Events" to tell process "Whisky" to get entire contents of window 1' 2>&1 \
+            | tr ',' '\n' | grep -iE 'button|sheet' | head -12 || echo "(nothing enumerable)"
+
+          for attempt in 1 2 3; do
+            osascript -e 'tell application "System Events" to tell process "Whisky" to click button "Next" of sheet 1 of window 1' 2>/dev/null \
+              && { echo "clicked Next (sheet)"; break; }
+            osascript -e 'tell application "System Events" to tell process "Whisky" to click button "Next" of window 1' 2>/dev/null \
+              && { echo "clicked Next (window)"; break; }
+            # Observed position of Next in the first-run sheet at 1024x768.
+            cliclick c:689,470 && echo "clicked Next (coords, attempt $attempt)"
+            sleep 15
             /usr/sbin/screencapture -x "$HOME/w-0$attempt-click.png" 2>/dev/null || true
-            # Has anything started downloading?
             D=$(find "$HOME/Library/Application Support" -maxdepth 3 -iname '*hisky*' 2>/dev/null | head -1)
-            [ -n "$D" ] && { echo "support dir: $D ($(du -sh "$D" 2>/dev/null | cut -f1))"; }
+            [ -n "$D" ] && echo "support dir: $D ($(du -sh "$D" 2>/dev/null | cut -f1))"
           done
+          sleep 20
+          /usr/sbin/screencapture -x "$HOME/w-05-after.png" 2>/dev/null || true
 
           echo "--- wait for a runtime to land ---"
           W=""
