@@ -102,11 +102,19 @@ install_dotnet() {
         || curl -fL --progress-bar -o dotnet.exe "$DOTNET_FALLBACK" \
         || die "could not download the .NET runtime"
     "$WINE" 'C:\stage\dotnet.exe' /quiet /norestart >/dev/null 2>&1 || true
-    sleep 10
-    # Verify rather than assume - this step can fail silently.
-    [ -d "$PREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App" ] \
-        || die ".NET did not install. Re-run; if it persists see docs/FINDINGS.md"
-    ok "installed"
+    # Poll rather than sleep a fixed interval: the installer finishes at very
+    # different speeds across machines, and a fixed wait reports a false
+    # failure on slower ones.
+    local target="$PREFIX/drive_c/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App"
+    local i
+    for i in $(seq 1 60); do
+        [ -d "$target" ] && break
+        sleep 5
+    done
+    [ -d "$target" ] \
+        || die ".NET did not install after 5 minutes.
+Re-run; if it persists see docs/FINDINGS.md"
+    ok "installed: $(ls "$target" | tr '\n' ' ')"
 }
 
 stage_launcher() {
