@@ -31,8 +31,21 @@ jobs:
           echo "asset: $URL"
           curl -fL --retry 3 -sS -o "$HOME/w.dmg" "$URL"
           hdiutil attach "$HOME/w.dmg" -nobrowse -quiet -mountpoint /Volumes/W
-          cp -R /Volumes/W/*.app /Applications/
+          # Wait for the mount to settle: copying straight after attach raced
+          # and produced a near-empty Whisky.app, so `open` could not find it.
+          for i in $(seq 1 20); do
+            [ -d /Volumes/W/Whisky.app/Contents/MacOS ] && break
+            sleep 2
+          done
+          echo "source bundle: $(find /Volumes/W/Whisky.app -type f 2>/dev/null | wc -l) files"
+          # ditto is the macOS-correct way to copy an app bundle.
+          ditto /Volumes/W/Whisky.app /Applications/Whisky.app
           hdiutil detach /Volumes/W -quiet || true
+          COUNT=$(find /Applications/Whisky.app -type f 2>/dev/null | wc -l)
+          echo "copied bundle: $COUNT files"
+          test "$COUNT" -gt 50 || { echo "FAIL: incomplete app bundle"; exit 1; }
+          test -x /Applications/Whisky.app/Contents/MacOS/Whisky \
+            || { echo "FAIL: no executable in the bundle"; exit 1; }
           xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
           defaults read /Applications/Whisky.app/Contents/Info.plist CFBundleShortVersionString \
             | sed 's/^/RESULT: whisky_version=/'
