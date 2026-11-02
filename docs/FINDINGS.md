@@ -173,6 +173,20 @@ itself. Worth retesting on real hardware if anyone is curious.
 
 - `launcher.exe` is **`PE32+ executable (GUI) x86-64`** — 64-bit, 11,060,322
   bytes at v0.1.1. (Commonly assumed to be 32-bit; it is not.)
+- **`eldorado.exe` — the game itself — is `PE32 executable (GUI) Intel 80386`:
+  32-bit.** 23 MB, verified against a real 0.7.1 install on Windows. The
+  `binkw32.dll` and `d3dx9_43.dll` beside it confirm the 32-bit lineage.
+
+  **The launcher and the game have different architectures**, which is easy to
+  get wrong in both directions — these notes did, first assuming the game was
+  32-bit, then "correcting" that after measuring only the launcher.
+
+  This matters on Apple Silicon: a 32-bit Windows binary needs Wine's WoW64
+  layer on top of Rosetta, a translation hop the 64-bit launcher never
+  exercises. Everything verified here ran 64-bit code, so the game is a
+  genuinely untested case rather than more of the same.
+- A complete 0.7.1 install on disk is **8.5 GB**, larger than the ~5.7 GB the
+  launcher transfers — it expands content after download. Budget accordingly.
 - The **x64** .NET Desktop Runtime installer is itself a **`PE32` (32-bit)
   bootstrapper** — normal for Microsoft installers, but surprising in `file`
   output.
