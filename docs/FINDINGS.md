@@ -183,8 +183,23 @@ itself. Worth retesting on real hardware if anyone is curious.
 
   This matters on Apple Silicon: a 32-bit Windows binary needs Wine's WoW64
   layer on top of Rosetta, a translation hop the 64-bit launcher never
-  exercises. Everything verified here ran 64-bit code, so the game is a
-  genuinely untested case rather than more of the same.
+  exercises.
+
+  **But 32-bit execution is already proven.** The .NET Desktop Runtime
+  installer is itself `PE32 executable (GUI) Intel 80386`, and it ran and
+  completed an install under Wine 11.16 on macOS 15. So "32-bit code cannot
+  execute" is off the table; what remains untested is whether the *game's*
+  graphics and video paths work, not whether its architecture can run.
+
+  Mixed architectures within one install: `eldorado.exe` and `custom_menu.exe`
+  are 32-bit, `crash_reporter.exe` and `launcher.exe` are 64-bit.
+
+- **What the game will actually exercise**, from a real install's contents:
+  `d3dx9_43.dll` (**DirectX 9**, despite ElDewrito being described as DX11 —
+  there is a D3D9 path), `binkw32.dll` (Bink video), `xinput1_3.dll` (gamepad,
+  which is why the guide says plug it in first), `mtndew.dll` (the mod itself)
+  and a `cef/` directory (the Chromium framework that `Game.CEFGpuEnable 0`
+  exists to tame).
 - A complete 0.7.1 install on disk is **8.5 GB**, larger than the ~5.7 GB the
   launcher transfers — it expands content after download. Budget accordingly.
 - The **x64** .NET Desktop Runtime installer is itself a **`PE32` (32-bit)
